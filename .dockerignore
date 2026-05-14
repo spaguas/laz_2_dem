@@ -3,3 +3,7 @@ __pycache__/
 venv/
 .env
 .git
+app/nuvens/*
+app/uploads/*
+app/outputs/*
+app/data/jobs.json

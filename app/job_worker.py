@@ -4,8 +4,8 @@ import queue
 import threading
 from pathlib import Path
 
+from .laz2dem import process_laz_to_dem
 from .job_store import JobStore
-from .pdal_service import process_laz_to_tif
 
 
 class JobWorker:
@@ -55,13 +55,13 @@ class JobWorker:
                 job_id,
                 status="processing",
                 progress=40,
-                message="Executando pipeline PDAL",
+                message="Executando pipeline PDAL do laz2dem",
             )
             self.store.update_job(
                 job_id,
                 status="processing",
                 progress=45,
-                message="Aplicando filtro CSF para remover ruído e pontos acima da superfície",
+                message="Filtrando pontos e classificando terreno",
             )
             self.store.update_job(
                 job_id,
@@ -69,7 +69,7 @@ class JobWorker:
                 progress=60,
                 message=f"Reprojetando de {job.source_srs} para {job.target_srs}",
             )
-            process_laz_to_tif(
+            process_laz_to_dem(
                 input_path=input_path,
                 output_path=output_path,
                 source_srs=job.source_srs,

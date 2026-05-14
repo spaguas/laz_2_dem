@@ -11,24 +11,41 @@
       <section class="panel hero">
         <h1>LAZ para GeoTIFF com Reprojeção</h1>
         <p>
-          Faça upload de um arquivo <strong>.laz</strong>, acompanhe o progresso em tempo real e baixe o
+          Selecione os grids <strong>.laz</strong> disponíveis, acompanhe o progresso em tempo real e baixe os
           <strong>.tif</strong> ao finalizar.
         </p>
       </section>
 
       <section class="panel upload">
-        <form id="uploadForm" enctype="multipart/form-data">
-          <label for="lazFile">Arquivo .laz</label>
-          <input id="lazFile" type="file" name="file" accept=".laz" required />
+        <form id="gridForm">
+          <div>
+            <div class="grid-header">
+              <label>Grids disponíveis</label>
+              <span>{{ grids|length }} arquivo(s)</span>
+            </div>
+            <select id="gridSelect" class="grid-select" name="grids" multiple size="10" {% if not grids %}disabled{% endif %}>
+              {% for grid in grids %}
+              <option value="{{ grid }}">{{ grid }}</option>
+              {% endfor %}
+            </select>
+            {% if not grids %}
+            <div class="grid-list empty-list">
+              <p class="empty-state">Nenhum arquivo .laz encontrado em app/nuvens.</p>
+            </div>
+            {% endif %}
+          </div>
 
           <div class="projection-grid">
             <div>
               <label for="sourceSrs">Projeção de origem</label>
-              <select id="sourceSrs" name="source_srs" required>
+              <select id="sourceSrs" disabled>
+                <option value="">Selecione um grid para inferir</option>
+                <option value="mixed">Múltiplas projeções inferidas</option>
                 {% for projection in projections %}
                 <option value="{{ projection.value }}">{{ projection.label }}</option>
                 {% endfor %}
               </select>
+              <p id="sourceSrsHint" class="field-hint">A origem será inferida pelo prefixo SF-22 ou SF-23.</p>
             </div>
             <div>
               <label for="targetSrs">Projeção de destino</label>
@@ -42,23 +59,23 @@
             </div>
           </div>
 
-          <button type="submit">Enviar e processar</button>
+          <button type="submit" {% if not grids %}disabled{% endif %}>Agendar processamento</button>
         </form>
 
-        <article id="jobStatus" class="job-card hidden">
-          <div class="job-meta">
-            <span id="jobId"></span>
-            <span id="jobState" class="badge">Aguardando</span>
-          </div>
-          <p id="jobMessage">Preparando...</p>
-          <p id="jobSrs" class="job-srs">Origem: - | Destino: -</p>
-          <div class="progress-track">
-            <div id="progressBar" class="progress-bar"></div>
-          </div>
-          <p id="progressText">0%</p>
-          <a id="downloadLink" class="hidden" href="#">Baixar resultado .tif</a>
-        </article>
+        <div id="jobStatusList" class="job-status-list hidden"></div>
       </section>
+
+      <dialog id="reprocessDialog" class="confirm-dialog">
+        <form method="dialog">
+          <h2>Confirmar reprocessamento</h2>
+          <p>Os grids abaixo já possuem processamento concluído para a projeção de destino selecionada.</p>
+          <ul id="reprocessGridList"></ul>
+          <div class="dialog-actions">
+            <button id="cancelReprocessButton" type="button" class="secondary-button">Cancelar</button>
+            <button id="confirmReprocessButton" type="button">Reprocessar mesmo assim</button>
+          </div>
+        </form>
+      </dialog>
 
       <section class="panel jobs">
         <h2>Últimos processamentos</h2>
@@ -76,6 +93,9 @@
       </section>
     </main>
 
-    <script src="/static/app.js"></script>
+    <script>
+      window.GRID_SOURCE_SRS = {{ grid_source_srs | tojson }};
+    </script>
+    <script src="/static/app.js?v={{ static_version }}"></script>
   </body>
 </html>

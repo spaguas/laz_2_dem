@@ -5,7 +5,6 @@ services:
     restart: unless-stopped
     volumes:
       - app_data:/app/app/data
-      - app_uploads:/app/app/uploads
       - app_outputs:/app/app/outputs
       - ${NUVENS_HOST_PATH:-./app/nuvens}:/app/app/nuvens
     ports:
@@ -13,8 +12,6 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - APP_ENV=production
-
 volumes:
   app_data:
-  app_uploads:
   app_outputs:

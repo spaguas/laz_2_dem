@@ -62,14 +62,6 @@ label {
   font-weight: 700;
 }
 
-input[type="file"] {
-  border: 1px dashed var(--surface-border);
-  border-radius: 12px;
-  padding: 0.7rem;
-  color: var(--muted);
-  background: rgba(0, 0, 0, 0.18);
-}
-
 select {
   width: 100%;
   border: 1px solid var(--surface-border);
@@ -77,6 +69,15 @@ select {
   padding: 0.7rem;
   color: var(--text);
   background: rgba(0, 0, 0, 0.25);
+}
+
+select:disabled {
+  opacity: 0.85;
+}
+
+select option {
+  background: #102f49;
+  color: var(--text);
 }
 
 .projection-grid {
@@ -101,8 +102,67 @@ button:hover {
   filter: brightness(1.03);
 }
 
-.job-card {
+button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.6);
+  opacity: 0.55;
+}
+
+.secondary-button {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--surface-border);
+}
+
+.grid-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.5rem;
+  color: var(--muted);
+}
+
+.grid-header label {
+  color: var(--text);
+}
+
+.grid-select,
+.grid-list {
+  max-height: 280px;
+  overflow: auto;
+  padding: 0.5rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.grid-select {
+  min-height: 240px;
+}
+
+.grid-select option {
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+}
+
+.empty-state {
+  margin: 0;
+  color: var(--muted);
+}
+
+.field-hint {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.job-status-list {
+  display: grid;
+  gap: 0.75rem;
   margin-top: 1rem;
+}
+
+.job-card {
   background: rgba(0, 0, 0, 0.2);
   border: 1px solid var(--surface-border);
   border-radius: 14px;
@@ -115,6 +175,10 @@ button:hover {
   gap: 0.8rem;
   margin-bottom: 0.4rem;
   font-size: 0.92rem;
+}
+
+.job-title {
+  overflow-wrap: anywhere;
 }
 
 .badge {
@@ -160,8 +224,8 @@ button:hover {
   background: linear-gradient(90deg, var(--accent-2), #44f0b3);
 }
 
-#progressText,
-#jobMessage {
+.progress-text,
+.job-message {
   color: var(--muted);
   margin: 0.5rem 0;
 }
@@ -172,11 +236,52 @@ button:hover {
   font-size: 0.9rem;
 }
 
-#downloadLink {
+.download-link {
   display: inline-block;
   color: #d8fff0;
   text-decoration: none;
   border-bottom: 1px solid rgba(216, 255, 240, 0.35);
+}
+
+.confirm-dialog {
+  width: min(520px, calc(100% - 2rem));
+  color: var(--text);
+  background: #102f49;
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  padding: 1.1rem;
+}
+
+.confirm-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.confirm-dialog h2 {
+  margin: 0 0 0.6rem;
+}
+
+.confirm-dialog p {
+  color: var(--muted);
+  margin: 0 0 0.8rem;
+}
+
+.confirm-dialog ul {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0 0 1rem;
+  padding-left: 1.2rem;
+}
+
+.confirm-dialog li {
+  margin: 0.25rem 0;
+  overflow-wrap: anywhere;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
 .jobs h2 {

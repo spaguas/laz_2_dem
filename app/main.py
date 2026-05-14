@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -14,11 +14,11 @@ from .job_store import JobRecord, JobStore
 from .job_worker import JobWorker
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-UPLOAD_DIR = BASE_DIR / "app" / "uploads"
+NUVENS_DIR = BASE_DIR / "app" / "nuvens"
 OUTPUT_DIR = BASE_DIR / "app" / "outputs"
 DATA_DIR = BASE_DIR / "app" / "data"
 
-for directory in (UPLOAD_DIR, OUTPUT_DIR, DATA_DIR):
+for directory in (NUVENS_DIR, OUTPUT_DIR, DATA_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 store = JobStore(DATA_DIR / "jobs.json")
@@ -37,6 +37,54 @@ PROJECTION_OPTIONS = [
     {"value": "EPSG:31985", "label": "SIRGAS 2000 / UTM 25S (EPSG:31985)"},
 ]
 ALLOWED_PROJECTIONS = {item["value"] for item in PROJECTION_OPTIONS}
+GRID_SOURCE_SRS = {
+    "SF-22-": "EPSG:31982",
+    "SF-23-": "EPSG:31983",
+}
+
+
+def list_laz_grids() -> list[str]:
+    return sorted(
+        path.name
+        for path in NUVENS_DIR.iterdir()
+        if path.is_file()
+        and path.suffix.lower() == ".laz"
+        and any(path.name.upper().startswith(prefix) for prefix in GRID_SOURCE_SRS)
+    )
+
+
+def get_grid_path(grid_name: str) -> Path:
+    safe_name = Path(grid_name).name
+    if safe_name != grid_name:
+        raise HTTPException(status_code=400, detail=f"Grid inválido: {grid_name}")
+
+    grid_path = NUVENS_DIR / safe_name
+    if grid_path.suffix.lower() != ".laz" or not grid_path.is_file():
+        raise HTTPException(status_code=400, detail=f"Grid não encontrado: {grid_name}")
+    return grid_path
+
+
+def infer_source_srs(grid_name: str) -> str:
+    for prefix, source_srs in GRID_SOURCE_SRS.items():
+        if grid_name.upper().startswith(prefix):
+            return source_srs
+    raise HTTPException(
+        status_code=400,
+        detail=f"Não foi possível inferir a projeção de origem para o grid: {grid_name}",
+    )
+
+
+def find_processed_grids(grid_names: list[str], target_srs: str) -> list[str]:
+    selected = set(grid_names)
+    processed = set()
+    for job in store.list_jobs():
+        if job.original_filename not in selected:
+            continue
+        if job.target_srs != target_srs:
+            continue
+        if job.status == "completed" and Path(job.output_path).exists():
+            processed.add(job.original_filename)
+    return sorted(processed)
 
 
 @app.on_event("startup")
@@ -47,64 +95,90 @@ def startup_event() -> None:
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request) -> HTMLResponse:
     jobs = store.list_jobs()[:10]
+    grids = list_laz_grids()
+    static_version = str((BASE_DIR / "app" / "static" / "app.js").stat().st_mtime_ns)
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
             "request": request,
             "jobs": jobs,
+            "grids": grids,
             "projections": PROJECTION_OPTIONS,
+            "grid_source_srs": GRID_SOURCE_SRS,
+            "static_version": static_version,
         },
     )
 
 
 @app.post("/api/jobs")
 def create_job(
-    file: UploadFile = File(...),
-    source_srs: str = Form(...),
+    grids: list[str] = Form(...),
     target_srs: str = Form(...),
+    approve_reprocess: Annotated[bool, Form()] = False,
 ) -> JSONResponse:
-    suffix = Path(file.filename or "").suffix.lower()
-    if suffix != ".laz":
-        raise HTTPException(status_code=400, detail="Envie um arquivo com extensão .laz")
-    if source_srs not in ALLOWED_PROJECTIONS:
-        raise HTTPException(status_code=400, detail="Projeção de origem inválida.")
+    if not grids:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um grid .laz.")
     if target_srs not in ALLOWED_PROJECTIONS:
         raise HTTPException(status_code=400, detail="Projeção de destino inválida.")
 
-    job_id = str(uuid.uuid4())
-    safe_name = Path(file.filename).name
-    input_path = UPLOAD_DIR / f"{job_id}_{safe_name}"
-    output_path = OUTPUT_DIR / f"{job_id}.tif"
+    selected_paths = [get_grid_path(grid) for grid in grids]
+    if len({path.name for path in selected_paths}) != len(selected_paths):
+        raise HTTPException(status_code=400, detail="A seleção contém grids duplicados.")
 
-    with input_path.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    inferred_sources = {path.name: infer_source_srs(path.name) for path in selected_paths}
+    processed_grids = find_processed_grids([path.name for path in selected_paths], target_srs)
+    if processed_grids and not approve_reprocess:
+        return JSONResponse(
+            {
+                "detail": "Um ou mais grids selecionados já foram processados para a projeção de destino.",
+                "reprocess_required": True,
+                "grids": processed_grids,
+            },
+            status_code=409,
+        )
 
     now = datetime.now(tz=timezone.utc).isoformat()
-    store.create_job(
-        JobRecord(
-            id=job_id,
-            original_filename=safe_name,
-            input_path=str(input_path),
-            output_path=str(output_path),
-            status="queued",
-            progress=0,
-            message="Job criado e aguardando processamento.",
-            created_at=now,
-            updated_at=now,
-            source_srs=source_srs,
-            target_srs=target_srs,
+    created_jobs = []
+    for input_path in selected_paths:
+        job_id = str(uuid.uuid4())
+        source_srs = inferred_sources[input_path.name]
+        output_path = OUTPUT_DIR / f"{job_id}.tif"
+        store.create_job(
+            JobRecord(
+                id=job_id,
+                original_filename=input_path.name,
+                input_path=str(input_path),
+                output_path=str(output_path),
+                status="queued",
+                progress=0,
+                message="Job criado e aguardando processamento.",
+                created_at=now,
+                updated_at=now,
+                source_srs=source_srs,
+                target_srs=target_srs,
+            )
         )
-    )
 
-    worker.enqueue(job_id)
+        worker.enqueue(job_id)
+        created_jobs.append(
+            {
+                "id": job_id,
+                "filename": input_path.name,
+                "status": "queued",
+                "progress": 0,
+                "message": "Grid agendado para execução.",
+                "source_srs": source_srs,
+                "target_srs": target_srs,
+            }
+        )
+
     return JSONResponse(
         {
-            "job_id": job_id,
+            "jobs": created_jobs,
             "status": "queued",
             "progress": 0,
-            "message": "Upload concluído. Job agendado para execução.",
-            "source_srs": source_srs,
+            "message": f"{len(created_jobs)} grid(s) agendado(s) para execução.",
             "target_srs": target_srs,
         },
         status_code=202,
