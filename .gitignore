@@ -4,7 +4,9 @@ __pycache__/
 *.pyc
 app/uploads/*
 app/outputs/*
+app/nuvens/*
 app/data/jobs.json
 !app/uploads/.gitkeep
 !app/outputs/.gitkeep
+!app/nuvens/.gitkeep
 !app/data/.gitkeep
