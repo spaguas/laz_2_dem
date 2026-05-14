@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Processamento de Nuvem de Pontos</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="panel hero">
+        <h1>LAZ para GeoTIFF com Reprojeção</h1>
+        <p>
+          Faça upload de um arquivo <strong>.laz</strong>, acompanhe o progresso em tempo real e baixe o
+          <strong>.tif</strong> ao finalizar.
+        </p>
+      </section>
+
+      <section class="panel upload">
+        <form id="uploadForm" enctype="multipart/form-data">
+          <label for="lazFile">Arquivo .laz</label>
+          <input id="lazFile" type="file" name="file" accept=".laz" required />
+
+          <div class="projection-grid">
+            <div>
+              <label for="sourceSrs">Projeção de origem</label>
+              <select id="sourceSrs" name="source_srs" required>
+                {% for projection in projections %}
+                <option value="{{ projection.value }}">{{ projection.label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label for="targetSrs">Projeção de destino</label>
+              <select id="targetSrs" name="target_srs" required>
+                {% for projection in projections %}
+                <option value="{{ projection.value }}" {% if projection.value == "EPSG:4674" %}selected{% endif %}>
+                  {{ projection.label }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <button type="submit">Enviar e processar</button>
+        </form>
+
+        <article id="jobStatus" class="job-card hidden">
+          <div class="job-meta">
+            <span id="jobId"></span>
+            <span id="jobState" class="badge">Aguardando</span>
+          </div>
+          <p id="jobMessage">Preparando...</p>
+          <p id="jobSrs" class="job-srs">Origem: - | Destino: -</p>
+          <div class="progress-track">
+            <div id="progressBar" class="progress-bar"></div>
+          </div>
+          <p id="progressText">0%</p>
+          <a id="downloadLink" class="hidden" href="#">Baixar resultado .tif</a>
+        </article>
+      </section>
+
+      <section class="panel jobs">
+        <h2>Últimos processamentos</h2>
+        <ul>
+          {% for job in jobs %}
+          <li>
+            <span>{{ job.original_filename }}</span>
+            <span class="badge {{ job.status }}">{{ job.status }}</span>
+            <span>{{ job.progress }}% | {{ job.source_srs }} -> {{ job.target_srs }}</span>
+          </li>
+          {% else %}
+          <li>Nenhum job executado até o momento.</li>
+          {% endfor %}
+        </ul>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

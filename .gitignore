@@ -1,0 +1,10 @@
+.env
+.codex
+__pycache__/
+*.pyc
+app/uploads/*
+app/outputs/*
+app/data/jobs.json
+!app/uploads/.gitkeep
+!app/outputs/.gitkeep
+!app/data/.gitkeep
