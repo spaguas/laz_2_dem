@@ -67,7 +67,7 @@ class JobWorker:
                 job_id,
                 status="processing",
                 progress=60,
-                message=f"Reprojetando de {job.source_srs} para {job.target_srs}",
+                message=f"Gerando GeoTIFF no CRS inferido: {job.target_srs}",
             )
             process_laz_to_dem(
                 input_path=input_path,

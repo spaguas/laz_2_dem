@@ -36,7 +36,6 @@ PROJECTION_OPTIONS = [
     {"value": "EPSG:31984", "label": "SIRGAS 2000 / UTM 24S (EPSG:31984)"},
     {"value": "EPSG:31985", "label": "SIRGAS 2000 / UTM 25S (EPSG:31985)"},
 ]
-ALLOWED_PROJECTIONS = {item["value"] for item in PROJECTION_OPTIONS}
 GRID_SOURCE_SRS = {
     "SF-22-": "EPSG:31982",
     "SF-23-": "EPSG:31983",
@@ -74,13 +73,11 @@ def infer_source_srs(grid_name: str) -> str:
     )
 
 
-def find_processed_grids(grid_names: list[str], target_srs: str) -> list[str]:
+def find_processed_grids(grid_names: list[str]) -> list[str]:
     selected = set(grid_names)
     processed = set()
     for job in store.list_jobs():
         if job.original_filename not in selected:
-            continue
-        if job.target_srs != target_srs:
             continue
         if job.status == "completed" and Path(job.output_path).exists():
             processed.add(job.original_filename)
@@ -114,24 +111,21 @@ def home(request: Request) -> HTMLResponse:
 @app.post("/api/jobs")
 def create_job(
     grids: list[str] = Form(...),
-    target_srs: str = Form(...),
     approve_reprocess: Annotated[bool, Form()] = False,
 ) -> JSONResponse:
     if not grids:
         raise HTTPException(status_code=400, detail="Selecione ao menos um grid .laz.")
-    if target_srs not in ALLOWED_PROJECTIONS:
-        raise HTTPException(status_code=400, detail="Projeção de destino inválida.")
 
     selected_paths = [get_grid_path(grid) for grid in grids]
     if len({path.name for path in selected_paths}) != len(selected_paths):
         raise HTTPException(status_code=400, detail="A seleção contém grids duplicados.")
 
     inferred_sources = {path.name: infer_source_srs(path.name) for path in selected_paths}
-    processed_grids = find_processed_grids([path.name for path in selected_paths], target_srs)
+    processed_grids = find_processed_grids([path.name for path in selected_paths])
     if processed_grids and not approve_reprocess:
         return JSONResponse(
             {
-                "detail": "Um ou mais grids selecionados já foram processados para a projeção de destino.",
+                "detail": "Um ou mais grids selecionados já foram processados.",
                 "reprocess_required": True,
                 "grids": processed_grids,
             },
@@ -143,7 +137,8 @@ def create_job(
     for input_path in selected_paths:
         job_id = str(uuid.uuid4())
         source_srs = inferred_sources[input_path.name]
-        output_path = OUTPUT_DIR / f"{job_id}.tif"
+        target_srs = source_srs
+        output_path = OUTPUT_DIR / f"{input_path.stem}.tiff"
         store.create_job(
             JobRecord(
                 id=job_id,
@@ -179,7 +174,6 @@ def create_job(
             "status": "queued",
             "progress": 0,
             "message": f"{len(created_jobs)} grid(s) agendado(s) para execução.",
-            "target_srs": target_srs,
         },
         status_code=202,
     )
@@ -220,5 +214,5 @@ def download_result(job_id: str) -> FileResponse:
     return FileResponse(
         path=output_path,
         media_type="image/tiff",
-        filename=f"{Path(job.original_filename).stem}_{job.target_srs.lower().replace(':', '_')}.tif",
+        filename=output_path.name,
     )

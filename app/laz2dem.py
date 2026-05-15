@@ -154,6 +154,6 @@ def process_laz_to_dem(
         raise RuntimeError(f"Falha ao executar PDAL CLI (code={result.returncode}): {log_tail}")
 
     if not output_path.exists():
-        raise RuntimeError("Saida .tif nao foi criada apos a execucao do pipeline.")
+        raise RuntimeError("Saida .tiff nao foi criada apos a execucao do pipeline.")
 
     return elapsed

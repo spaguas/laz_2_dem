@@ -86,6 +86,10 @@ select option {
   gap: 0.7rem;
 }
 
+.projection-grid.single-field {
+  grid-template-columns: 1fr;
+}
+
 button {
   border: 0;
   border-radius: 10px;

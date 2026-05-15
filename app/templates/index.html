@@ -9,10 +9,10 @@
   <body>
     <main class="app-shell">
       <section class="panel hero">
-        <h1>LAZ para GeoTIFF com Reprojeção</h1>
+        <h1>LAZ para GeoTIFF</h1>
         <p>
           Selecione os grids <strong>.laz</strong> disponíveis, acompanhe o progresso em tempo real e baixe os
-          <strong>.tif</strong> ao finalizar.
+          <strong>.tiff</strong> ao finalizar.
         </p>
       </section>
 
@@ -35,9 +35,9 @@
             {% endif %}
           </div>
 
-          <div class="projection-grid">
+          <div class="projection-grid single-field">
             <div>
-              <label for="sourceSrs">Projeção de origem</label>
+              <label for="sourceSrs">Projeção inferida</label>
               <select id="sourceSrs" disabled>
                 <option value="">Selecione um grid para inferir</option>
                 <option value="mixed">Múltiplas projeções inferidas</option>
@@ -45,17 +45,9 @@
                 <option value="{{ projection.value }}">{{ projection.label }}</option>
                 {% endfor %}
               </select>
-              <p id="sourceSrsHint" class="field-hint">A origem será inferida pelo prefixo SF-22 ou SF-23.</p>
-            </div>
-            <div>
-              <label for="targetSrs">Projeção de destino</label>
-              <select id="targetSrs" name="target_srs" required>
-                {% for projection in projections %}
-                <option value="{{ projection.value }}" {% if projection.value == "EPSG:4674" %}selected{% endif %}>
-                  {{ projection.label }}
-                </option>
-                {% endfor %}
-              </select>
+              <p id="sourceSrsHint" class="field-hint">
+                A origem e o destino serão inferidos pelo prefixo SF-22 ou SF-23.
+              </p>
             </div>
           </div>
 
@@ -68,7 +60,7 @@
       <dialog id="reprocessDialog" class="confirm-dialog">
         <form method="dialog">
           <h2>Confirmar reprocessamento</h2>
-          <p>Os grids abaixo já possuem processamento concluído para a projeção de destino selecionada.</p>
+          <p>Os grids abaixo já possuem processamento concluído.</p>
           <ul id="reprocessGridList"></ul>
           <div class="dialog-actions">
             <button id="cancelReprocessButton" type="button" class="secondary-button">Cancelar</button>
@@ -84,7 +76,7 @@
           <li>
             <span>{{ job.original_filename }}</span>
             <span class="badge {{ job.status }}">{{ job.status }}</span>
-            <span>{{ job.progress }}% | {{ job.source_srs }} -> {{ job.target_srs }}</span>
+            <span>{{ job.progress }}% | CRS: {{ job.target_srs }}</span>
           </li>
           {% else %}
           <li>Nenhum job executado até o momento.</li>
