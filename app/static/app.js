@@ -37,25 +37,25 @@ function updateSourceProjectionPreview() {
 
   if (selectedGrids.length === 0) {
     sourceSrs.value = "";
-    sourceSrsHint.textContent = "A origem será inferida pelo prefixo SF-22 ou SF-23.";
+    sourceSrsHint.textContent = "A origem e o destino serão inferidos pelo prefixo SF-22 ou SF-23.";
     return;
   }
 
   if (hasUnknown) {
     sourceSrs.value = "";
-    sourceSrsHint.textContent = "Há grid sem prefixo reconhecido para inferir a projeção de origem.";
+    sourceSrsHint.textContent = "Há grid sem prefixo reconhecido para inferir a projeção.";
     return;
   }
 
   if (inferredValues.size === 1) {
     const [value] = inferredValues;
     sourceSrs.value = value;
-    sourceSrsHint.textContent = "Origem inferida automaticamente pelos grids selecionados.";
+    sourceSrsHint.textContent = "CRS inferido automaticamente; o GeoTIFF será gerado nesse mesmo CRS.";
     return;
   }
 
   sourceSrs.value = "mixed";
-  sourceSrsHint.textContent = "Os grids selecionados serão processados com suas projeções de origem correspondentes.";
+  sourceSrsHint.textContent = "Cada grid será processado no CRS inferido a partir do seu nome.";
 }
 
 function showNotice(message) {
@@ -85,7 +85,7 @@ function createJobCard(job) {
       <div class="progress-bar"></div>
     </div>
     <p class="progress-text">0%</p>
-    <a class="download-link hidden" href="#">Baixar resultado .tif</a>
+    <a class="download-link hidden" href="#">Baixar resultado .tiff</a>
   `;
   jobStatusList.appendChild(article);
   setJobView(job);
@@ -102,9 +102,7 @@ function setJobView(data) {
   badge.textContent = data.status;
   badge.className = `badge ${data.status}`;
   article.querySelector(".job-message").textContent = data.message;
-  article.querySelector(".job-srs").textContent = `Origem: ${data.source_srs || "-"} | Destino: ${
-    data.target_srs || "-"
-  }`;
+  article.querySelector(".job-srs").textContent = `CRS: ${data.target_srs || data.source_srs || "-"}`;
   article.querySelector(".progress-bar").style.width = `${data.progress}%`;
   article.querySelector(".progress-text").textContent = `${data.progress}%`;
 
