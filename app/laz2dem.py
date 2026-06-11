@@ -23,7 +23,6 @@ def build_pipeline(
         {
             "type": "readers.las",
             "filename": str(input_path),
-            "nosync": True, # <-- alteração - Impede o PDAL de quebrar com a falta da flag WKT
         },
         {
             "type": "filters.reprojection",
@@ -130,7 +129,8 @@ def process_laz_to_dem(
         if default_pdal_bin.exists():
             pdal_bin = str(default_pdal_bin)
         else:
-            raise RuntimeError("Executavel 'pdal' nao encontrado no container.")
+            raise RuntimeError(
+                "Executavel 'pdal' nao encontrado no container.")
 
     started_at = time.time()
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tmp:
@@ -152,9 +152,11 @@ def process_laz_to_dem(
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
         log_tail = stderr[-1200:] if stderr else stdout[-1200:]
-        raise RuntimeError(f"Falha ao executar PDAL CLI (code={result.returncode}): {log_tail}")
+        raise RuntimeError(
+            f"Falha ao executar PDAL CLI (code={result.returncode}): {log_tail}")
 
     if not output_path.exists():
-        raise RuntimeError("Saida .tiff nao foi criada apos a execucao do pipeline.")
+        raise RuntimeError(
+            "Saida .tiff nao foi criada apos a execucao do pipeline.")
 
     return elapsed
