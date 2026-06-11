@@ -23,6 +23,7 @@ def build_pipeline(
         {
             "type": "readers.las",
             "filename": str(input_path),
+            "nosync": True, # <-- alteração - Impede o PDAL de quebrar com a falta da flag WKT
         },
         {
             "type": "filters.reprojection",

@@ -8,12 +8,39 @@ const reprocessGridList = document.getElementById("reprocessGridList");
 const cancelReprocessButton = document.getElementById("cancelReprocessButton");
 const confirmReprocessButton = document.getElementById("confirmReprocessButton");
 
+const tabManual = document.getElementById("tabManual");
+const tabCsv = document.getElementById("tabCsv");
+const panelManual = document.getElementById("panelManual");
+const panelCsv = document.getElementById("panelCsv");
+const csvForm = document.getElementById("csvForm");
+const batchProgress = document.getElementById("batchProgress");
+const batchTitle = document.getElementById("batchTitle");
+const batchCounter = document.getElementById("batchCounter");
+const batchBar = document.getElementById("batchBar");
+const batchErrors = document.getElementById("batchErrors");
+
 const gridSourceSrs = window.GRID_SOURCE_SRS || {};
 const pollTimers = new Map();
+let batchPollTimer = null;
 
 if (!gridForm || !gridSelect) {
   throw new Error("A tela de seleção de grids não foi carregada corretamente.");
 }
+
+// --- Tab switching ---
+tabManual.addEventListener("click", () => {
+  tabManual.classList.add("active");
+  tabCsv.classList.remove("active");
+  panelManual.classList.remove("hidden");
+  panelCsv.classList.add("hidden");
+});
+
+tabCsv.addEventListener("click", () => {
+  tabCsv.classList.add("active");
+  tabManual.classList.remove("active");
+  panelCsv.classList.remove("hidden");
+  panelManual.classList.add("hidden");
+});
 
 function clearPollTimers() {
   pollTimers.forEach((timer) => clearInterval(timer));
@@ -150,6 +177,10 @@ function openReprocessDialog(grids) {
     item.textContent = grid;
     reprocessGridList.appendChild(item);
   });
+  confirmReprocessButton.onclick = () => {
+    reprocessDialog.close();
+    submitJobs(true);
+  };
   reprocessDialog.showModal();
 }
 
@@ -209,9 +240,102 @@ cancelReprocessButton.addEventListener("click", () => {
   showNotice("Reprocessamento cancelado. Nenhum novo job foi agendado.");
 });
 
-confirmReprocessButton.addEventListener("click", () => {
-  reprocessDialog.close();
-  submitJobs(true);
+// confirmReprocessButton.onclick is set dynamically per dialog origin (manual or CSV)
+
+// --- Batch progress ---
+function updateBatchProgress(summary, totalFromCsv) {
+  const total = totalFromCsv || summary.total;
+  const done = summary.completed + summary.failed;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  batchTitle.textContent = `Lote: ${summary.completed} concluído(s) · ${summary.failed} falha(s) · ${summary.remaining} na fila`;
+  batchCounter.textContent = `${done} / ${total} (${pct}%)`;
+  batchBar.style.width = `${pct}%`;
+
+  batchProgress.classList.remove("hidden");
+}
+
+function startBatchPolling(batchId, totalFromCsv) {
+  if (batchPollTimer) clearInterval(batchPollTimer);
+
+  async function poll() {
+    try {
+      const res = await fetch(`/api/batch/${batchId}/summary`);
+      if (!res.ok) return;
+      const summary = await res.json();
+      updateBatchProgress(summary, totalFromCsv);
+      if (summary.remaining === 0) {
+        clearInterval(batchPollTimer);
+        batchPollTimer = null;
+      }
+    } catch (_) { /* silent */ }
+  }
+
+  poll();
+  batchPollTimer = setInterval(poll, 3000);
+}
+
+async function submitCsvBatch(approveReprocess = false) {
+  const fileInput = document.getElementById("csvFile");
+  if (!fileInput.files.length) {
+    showNotice("Selecione um arquivo CSV.");
+    return;
+  }
+
+  const formData = new FormData(csvForm);
+  formData.set("approve_reprocess", approveReprocess ? "true" : "false");
+
+  showNotice("Enviando CSV...");
+
+  try {
+    const response = await fetch("/api/batch", { method: "POST", body: formData });
+    const data = await response.json();
+
+    if (response.status === 409 && data.reprocess_required) {
+      showNotice(data.detail);
+      openReprocessDialogCsv(data.grids || []);
+      return;
+    }
+
+    if (!response.ok) {
+      showNotice(data.detail || "Falha ao processar CSV.");
+      return;
+    }
+
+    jobStatusList.classList.remove("hidden");
+    jobStatusList.innerHTML = "";
+    showNotice(data.message);
+
+    if (data.errors && data.errors.length > 0) {
+      batchErrors.classList.remove("hidden");
+      batchErrors.innerHTML = `<strong>Arquivos ignorados (${data.errors.length}):</strong><ul>${data.errors.map((e) => `<li>${e.filename}: ${e.error}</li>`).join("")}</ul>`;
+    } else {
+      batchErrors.classList.add("hidden");
+    }
+
+    startBatchPolling(data.batch_id, data.total);
+  } catch (error) {
+    showNotice(error.message);
+  }
+}
+
+function openReprocessDialogCsv(grids) {
+  reprocessGridList.innerHTML = "";
+  grids.forEach((grid) => {
+    const item = document.createElement("li");
+    item.textContent = grid;
+    reprocessGridList.appendChild(item);
+  });
+  confirmReprocessButton.onclick = () => {
+    reprocessDialog.close();
+    submitCsvBatch(true);
+  };
+  reprocessDialog.showModal();
+}
+
+csvForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitCsvBatch(false);
 });
 
 updateSourceProjectionPreview();

@@ -17,42 +17,71 @@
       </section>
 
       <section class="panel upload">
-        <form id="gridForm">
-          <div>
-            <div class="grid-header">
-              <label>Grids disponíveis</label>
-              <span>{{ grids|length }} arquivo(s)</span>
-            </div>
-            <select id="gridSelect" class="grid-select" name="grids" multiple size="10" {% if not grids %}disabled{% endif %}>
-              {% for grid in grids %}
-              <option value="{{ grid }}">{{ grid }}</option>
-              {% endfor %}
-            </select>
-            {% if not grids %}
-            <div class="grid-list empty-list">
-              <p class="empty-state">Nenhum arquivo .laz encontrado em app/nuvens.</p>
-            </div>
-            {% endif %}
-          </div>
+        <div class="upload-tabs">
+          <button type="button" id="tabManual" class="tab-btn active">Seleção manual</button>
+          <button type="button" id="tabCsv" class="tab-btn">Importar CSV</button>
+        </div>
 
-          <div class="projection-grid single-field">
+        <div id="panelManual">
+          <form id="gridForm">
             <div>
-              <label for="sourceSrs">Projeção inferida</label>
-              <select id="sourceSrs" disabled>
-                <option value="">Selecione um grid para inferir</option>
-                <option value="mixed">Múltiplas projeções inferidas</option>
-                {% for projection in projections %}
-                <option value="{{ projection.value }}">{{ projection.label }}</option>
+              <div class="grid-header">
+                <label>Grids disponíveis</label>
+                <span>{{ grids|length }} arquivo(s)</span>
+              </div>
+              <select id="gridSelect" class="grid-select" name="grids" multiple size="10" {% if not grids %}disabled{% endif %}>
+                {% for grid in grids %}
+                <option value="{{ grid }}">{{ grid }}</option>
                 {% endfor %}
               </select>
-              <p id="sourceSrsHint" class="field-hint">
-                A origem e o destino serão inferidos pelo prefixo SF-22 ou SF-23.
-              </p>
+              {% if not grids %}
+              <div class="grid-list empty-list">
+                <p class="empty-state">Nenhum arquivo .laz encontrado em app/nuvens.</p>
+              </div>
+              {% endif %}
             </div>
-          </div>
 
-          <button type="submit" {% if not grids %}disabled{% endif %}>Agendar processamento</button>
-        </form>
+            <div class="projection-grid single-field">
+              <div>
+                <label for="sourceSrs">Projeção inferida</label>
+                <select id="sourceSrs" disabled>
+                  <option value="">Selecione um grid para inferir</option>
+                  <option value="mixed">Múltiplas projeções inferidas</option>
+                  {% for projection in projections %}
+                  <option value="{{ projection.value }}">{{ projection.label }}</option>
+                  {% endfor %}
+                </select>
+                <p id="sourceSrsHint" class="field-hint">
+                  A origem e o destino serão inferidos pelo prefixo SF-22 ou SF-23.
+                </p>
+              </div>
+            </div>
+
+            <button type="submit" {% if not grids %}disabled{% endif %}>Agendar processamento</button>
+          </form>
+        </div>
+
+        <div id="panelCsv" class="hidden">
+          <form id="csvForm">
+            <div>
+              <label for="csvFile">Arquivo CSV com lista de grids</label>
+              <p class="field-hint">Uma coluna com os nomes dos arquivos .laz, um por linha. Cabeçalho opcional.</p>
+              <input type="file" id="csvFile" name="file" accept=".csv,.txt" class="csv-input" required />
+            </div>
+            <button type="submit">Importar e agendar</button>
+          </form>
+
+          <div id="batchProgress" class="batch-progress hidden">
+            <div class="batch-header">
+              <span id="batchTitle" class="batch-title"></span>
+              <span id="batchCounter" class="batch-counter"></span>
+            </div>
+            <div class="progress-track">
+              <div id="batchBar" class="progress-bar"></div>
+            </div>
+            <div id="batchErrors" class="batch-errors hidden"></div>
+          </div>
+        </div>
 
         <div id="jobStatusList" class="job-status-list hidden"></div>
       </section>

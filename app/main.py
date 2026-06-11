@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import csv
+import io
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -215,4 +217,117 @@ def download_result(job_id: str) -> FileResponse:
         path=output_path,
         media_type="image/tiff",
         filename=output_path.name,
+    )
+
+
+@app.get("/api/summary")
+def get_summary() -> JSONResponse:
+    return JSONResponse(store.get_overall_summary())
+
+
+@app.get("/api/batch/{batch_id}/summary")
+def get_batch_summary(batch_id: str) -> JSONResponse:
+    return JSONResponse(store.get_batch_summary(batch_id))
+
+
+@app.post("/api/batch")
+async def create_batch(
+    file: UploadFile = File(...),
+    approve_reprocess: Annotated[bool, Form()] = False,
+) -> JSONResponse:
+    contents = await file.read()
+    try:
+        text = contents.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = contents.decode("latin-1")
+
+    reader = csv.reader(io.StringIO(text))
+    filenames: list[str] = []
+    for row in reader:
+        if not row:
+            continue
+        name = row[0].strip()
+        if not name:
+            continue
+        if name.lower() in ("filename", "nome", "arquivo", "grid"):
+            continue
+        if not name.lower().endswith(".laz"):
+            name += ".laz"
+        filenames.append(name)
+
+    if not filenames:
+        raise HTTPException(status_code=400, detail="CSV vazio ou sem nomes de arquivo válidos.")
+
+    # Validate all filenames before creating any job
+    errors: list[dict] = []
+    valid_paths: list[tuple[str, Path, str]] = []
+    for name in filenames:
+        safe_name = Path(name).name
+        if safe_name != name:
+            errors.append({"filename": name, "error": "Nome de arquivo inválido."})
+            continue
+        grid_path = NUVENS_DIR / safe_name
+        if grid_path.suffix.lower() != ".laz" or not grid_path.is_file():
+            errors.append({"filename": name, "error": "Arquivo não encontrado em app/nuvens."})
+            continue
+        try:
+            source_srs = infer_source_srs(name)
+        except HTTPException as exc:
+            errors.append({"filename": name, "error": exc.detail})
+            continue
+        valid_paths.append((name, grid_path, source_srs))
+
+    if not valid_paths:
+        return JSONResponse(
+            {"detail": "Nenhum arquivo válido encontrado.", "errors": errors},
+            status_code=400,
+        )
+
+    valid_names = [name for name, _, _ in valid_paths]
+    processed_grids = find_processed_grids(valid_names)
+    if processed_grids and not approve_reprocess:
+        return JSONResponse(
+            {
+                "detail": "Um ou mais grids do CSV já foram processados.",
+                "reprocess_required": True,
+                "grids": processed_grids,
+            },
+            status_code=409,
+        )
+
+    batch_id = str(uuid.uuid4())
+    now = datetime.now(tz=timezone.utc).isoformat()
+    created_jobs = []
+
+    for name, input_path, source_srs in valid_paths:
+        job_id = str(uuid.uuid4())
+        output_path = OUTPUT_DIR / f"{input_path.stem}.tiff"
+        store.create_job(
+            JobRecord(
+                id=job_id,
+                original_filename=name,
+                input_path=str(input_path),
+                output_path=str(output_path),
+                status="queued",
+                progress=0,
+                message="Job criado via CSV e aguardando processamento.",
+                created_at=now,
+                updated_at=now,
+                source_srs=source_srs,
+                target_srs=source_srs,
+                batch_id=batch_id,
+            )
+        )
+        worker.enqueue(job_id)
+        created_jobs.append({"id": job_id, "filename": name, "status": "queued"})
+
+    return JSONResponse(
+        {
+            "batch_id": batch_id,
+            "total": len(filenames),
+            "queued": len(created_jobs),
+            "errors": errors,
+            "message": f"{len(created_jobs)} grid(s) agendado(s) de {len(filenames)} linha(s) no CSV.",
+        },
+        status_code=202,
     )

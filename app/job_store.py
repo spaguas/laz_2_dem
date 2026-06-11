@@ -21,6 +21,7 @@ class JobRecord:
     updated_at: str
     source_srs: str = "EPSG:4674"
     target_srs: str = "EPSG:4674"
+    batch_id: Optional[str] = None
 
 
 class JobStore:
@@ -45,6 +46,7 @@ class JobStore:
             normalized = dict(item)
             normalized.setdefault("source_srs", "EPSG:4674")
             normalized.setdefault("target_srs", "EPSG:4674")
+            normalized.setdefault("batch_id", None)
             job = JobRecord(**normalized)
             self._jobs[job.id] = job
 
@@ -87,3 +89,23 @@ class JobStore:
         with self._lock:
             jobs = [JobRecord(**asdict(j)) for j in self._jobs.values()]
         return sorted(jobs, key=lambda j: j.created_at, reverse=True)
+
+    def get_batch_summary(self, batch_id: str) -> dict:
+        with self._lock:
+            jobs = [j for j in self._jobs.values() if j.batch_id == batch_id]
+        counts: dict = {"total": len(jobs), "queued": 0, "processing": 0, "completed": 0, "failed": 0}
+        for job in jobs:
+            if job.status in counts:
+                counts[job.status] += 1
+        counts["remaining"] = counts["queued"] + counts["processing"]
+        return counts
+
+    def get_overall_summary(self) -> dict:
+        with self._lock:
+            jobs = list(self._jobs.values())
+        counts: dict = {"total": len(jobs), "queued": 0, "processing": 0, "completed": 0, "failed": 0}
+        for job in jobs:
+            if job.status in counts:
+                counts[job.status] += 1
+        counts["remaining"] = counts["queued"] + counts["processing"]
+        return counts
