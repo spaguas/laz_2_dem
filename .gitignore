@@ -10,3 +10,5 @@ app/data/jobs.json
 !app/outputs/.gitkeep
 !app/nuvens/.gitkeep
 !app/data/.gitkeep
+app_outputs
+app_data
