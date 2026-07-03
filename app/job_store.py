@@ -22,6 +22,7 @@ class JobRecord:
     source_srs: str = "EPSG:4674"
     target_srs: str = "EPSG:4674"
     batch_id: Optional[str] = None
+    error_log: Optional[str] = None
 
 
 class JobStore:
@@ -47,6 +48,7 @@ class JobStore:
             normalized.setdefault("source_srs", "EPSG:4674")
             normalized.setdefault("target_srs", "EPSG:4674")
             normalized.setdefault("batch_id", None)
+            normalized.setdefault("error_log", None)
             job = JobRecord(**normalized)
             self._jobs[job.id] = job
 
@@ -66,6 +68,7 @@ class JobStore:
         status: Optional[str] = None,
         progress: Optional[int] = None,
         message: Optional[str] = None,
+        error_log: Optional[str] = None,
     ) -> None:
         with self._lock:
             job = self._jobs[job_id]
@@ -75,6 +78,8 @@ class JobStore:
                 job.progress = max(0, min(100, progress))
             if message is not None:
                 job.message = message
+            if error_log is not None:
+                job.error_log = error_log
             job.updated_at = self._now()
             self._save()
 

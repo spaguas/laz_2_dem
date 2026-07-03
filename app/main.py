@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,9 +39,12 @@ PROJECTION_OPTIONS = [
     {"value": "EPSG:31984", "label": "SIRGAS 2000 / UTM 24S (EPSG:31984)"},
     {"value": "EPSG:31985", "label": "SIRGAS 2000 / UTM 25S (EPSG:31985)"},
 ]
-GRID_SOURCE_SRS = {
-    "SF-22-": "EPSG:31982",
-    "SF-23-": "EPSG:31983",
+# A segunda letra do prefixo (ex.: o "F" em "SF-22-") pode variar; quem define o EPSG
+# é apenas o número (22 ou 23), então o padrão aceita qualquer letra nessa posição.
+GRID_PREFIX_PATTERN = re.compile(r"^S[A-Z]-(22|23)-")
+GRID_NUMBER_SRS = {
+    "22": "EPSG:31982",
+    "23": "EPSG:31983",
 }
 
 
@@ -50,7 +54,7 @@ def list_laz_grids() -> list[str]:
         for path in NUVENS_DIR.iterdir()
         if path.is_file()
         and path.suffix.lower() == ".laz"
-        and any(path.name.upper().startswith(prefix) for prefix in GRID_SOURCE_SRS)
+        and GRID_PREFIX_PATTERN.match(path.name.upper())
     )
 
 
@@ -66,9 +70,9 @@ def get_grid_path(grid_name: str) -> Path:
 
 
 def infer_source_srs(grid_name: str) -> str:
-    for prefix, source_srs in GRID_SOURCE_SRS.items():
-        if grid_name.upper().startswith(prefix):
-            return source_srs
+    match = GRID_PREFIX_PATTERN.match(grid_name.upper())
+    if match:
+        return GRID_NUMBER_SRS[match.group(1)]
     raise HTTPException(
         status_code=400,
         detail=f"Não foi possível inferir a projeção de origem para o grid: {grid_name}",
@@ -104,7 +108,8 @@ def home(request: Request) -> HTMLResponse:
             "jobs": jobs,
             "grids": grids,
             "projections": PROJECTION_OPTIONS,
-            "grid_source_srs": GRID_SOURCE_SRS,
+            "grid_prefix_pattern": GRID_PREFIX_PATTERN.pattern,
+            "grid_number_srs": GRID_NUMBER_SRS,
             "static_version": static_version,
         },
     )
@@ -181,6 +186,27 @@ def create_job(
     )
 
 
+@app.get("/api/jobs")
+def list_jobs() -> JSONResponse:
+    jobs = [
+        {
+            "id": job.id,
+            "filename": job.original_filename,
+            "status": job.status,
+            "progress": job.progress,
+            "message": job.message,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+            "completed_at": job.updated_at if job.status == "completed" else None,
+            "source_srs": job.source_srs,
+            "target_srs": job.target_srs,
+            "has_error_log": bool(job.error_log),
+        }
+        for job in store.list_jobs()
+    ]
+    return JSONResponse({"jobs": jobs})
+
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str) -> JSONResponse:
     job = store.get_job(job_id)
@@ -196,8 +222,10 @@ def get_job(job_id: str) -> JSONResponse:
             "message": job.message,
             "created_at": job.created_at,
             "updated_at": job.updated_at,
+            "completed_at": job.updated_at if job.status == "completed" else None,
             "source_srs": job.source_srs,
             "target_srs": job.target_srs,
+            "error_log": job.error_log,
             "download_url": f"/api/jobs/{job.id}/download" if job.status == "completed" else None,
         }
     )

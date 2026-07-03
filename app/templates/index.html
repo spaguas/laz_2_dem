@@ -20,6 +20,7 @@
         <div class="upload-tabs">
           <button type="button" id="tabManual" class="tab-btn active">Seleção manual</button>
           <button type="button" id="tabCsv" class="tab-btn">Importar CSV</button>
+          <button type="button" id="tabQueue" class="tab-btn">Fila de processamento</button>
         </div>
 
         <div id="panelManual">
@@ -52,7 +53,7 @@
                   {% endfor %}
                 </select>
                 <p id="sourceSrsHint" class="field-hint">
-                  A origem e o destino serão inferidos pelo prefixo SF-22 ou SF-23.
+                  A origem e o destino serão inferidos pelo prefixo S?-22 ou S?-23 (a segunda letra pode variar).
                 </p>
               </div>
             </div>
@@ -83,6 +84,24 @@
           </div>
         </div>
 
+        <div id="panelQueue" class="hidden">
+          <table class="queue-table">
+            <thead>
+              <tr>
+                <th>Arquivo</th>
+                <th>Status</th>
+                <th>Concluído em</th>
+                <th>Log</th>
+              </tr>
+            </thead>
+            <tbody id="queueTableBody">
+              <tr>
+                <td colspan="4" class="empty-state">Nenhum job na fila de processamento.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
         <div id="jobStatusList" class="job-status-list hidden"></div>
       </section>
 
@@ -94,6 +113,17 @@
           <div class="dialog-actions">
             <button id="cancelReprocessButton" type="button" class="secondary-button">Cancelar</button>
             <button id="confirmReprocessButton" type="button">Reprocessar mesmo assim</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="errorLogDialog" class="confirm-dialog">
+        <form method="dialog">
+          <h2>Log do erro</h2>
+          <p id="errorLogFilename"></p>
+          <pre id="errorLogContent" class="error-log-content"></pre>
+          <div class="dialog-actions">
+            <button id="closeErrorLogButton" type="button" class="secondary-button">Fechar</button>
           </div>
         </form>
       </dialog>
@@ -115,7 +145,8 @@
     </main>
 
     <script>
-      window.GRID_SOURCE_SRS = {{ grid_source_srs | tojson }};
+      window.GRID_PREFIX_PATTERN = {{ grid_prefix_pattern | tojson }};
+      window.GRID_NUMBER_SRS = {{ grid_number_srs | tojson }};
     </script>
     <script src="/static/app.js?v={{ static_version }}"></script>
   </body>

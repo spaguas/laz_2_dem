@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import traceback
 from pathlib import Path
 
 from .laz2dem import process_laz_to_dem
@@ -94,4 +95,5 @@ class JobWorker:
                 status="failed",
                 progress=100,
                 message=f"Falha no processamento: {exc}",
+                error_log=traceback.format_exc(),
             )

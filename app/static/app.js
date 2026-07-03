@@ -10,37 +10,53 @@ const confirmReprocessButton = document.getElementById("confirmReprocessButton")
 
 const tabManual = document.getElementById("tabManual");
 const tabCsv = document.getElementById("tabCsv");
+const tabQueue = document.getElementById("tabQueue");
 const panelManual = document.getElementById("panelManual");
 const panelCsv = document.getElementById("panelCsv");
+const panelQueue = document.getElementById("panelQueue");
+const queueTableBody = document.getElementById("queueTableBody");
 const csvForm = document.getElementById("csvForm");
 const batchProgress = document.getElementById("batchProgress");
 const batchTitle = document.getElementById("batchTitle");
 const batchCounter = document.getElementById("batchCounter");
 const batchBar = document.getElementById("batchBar");
 const batchErrors = document.getElementById("batchErrors");
+const errorLogDialog = document.getElementById("errorLogDialog");
+const errorLogFilename = document.getElementById("errorLogFilename");
+const errorLogContent = document.getElementById("errorLogContent");
+const closeErrorLogButton = document.getElementById("closeErrorLogButton");
 
-const gridSourceSrs = window.GRID_SOURCE_SRS || {};
+const gridNumberSrs = window.GRID_NUMBER_SRS || {};
+const gridPrefixPattern = new RegExp(window.GRID_PREFIX_PATTERN || "^S[A-Z]-(22|23)-", "i");
 const pollTimers = new Map();
 let batchPollTimer = null;
+let queuePollTimer = null;
 
 if (!gridForm || !gridSelect) {
   throw new Error("A tela de seleção de grids não foi carregada corretamente.");
 }
 
 // --- Tab switching ---
-tabManual.addEventListener("click", () => {
-  tabManual.classList.add("active");
-  tabCsv.classList.remove("active");
-  panelManual.classList.remove("hidden");
-  panelCsv.classList.add("hidden");
-});
+function showTab(activeTab) {
+  [tabManual, tabCsv, tabQueue].forEach((tab) => tab.classList.toggle("active", tab === activeTab));
+  panelManual.classList.toggle("hidden", activeTab !== tabManual);
+  panelCsv.classList.toggle("hidden", activeTab !== tabCsv);
+  panelQueue.classList.toggle("hidden", activeTab !== tabQueue);
 
-tabCsv.addEventListener("click", () => {
-  tabCsv.classList.add("active");
-  tabManual.classList.remove("active");
-  panelCsv.classList.remove("hidden");
-  panelManual.classList.add("hidden");
-});
+  if (activeTab === tabQueue) {
+    refreshQueue();
+    if (!queuePollTimer) {
+      queuePollTimer = setInterval(refreshQueue, 3000);
+    }
+  } else if (queuePollTimer) {
+    clearInterval(queuePollTimer);
+    queuePollTimer = null;
+  }
+}
+
+tabManual.addEventListener("click", () => showTab(tabManual));
+tabCsv.addEventListener("click", () => showTab(tabCsv));
+tabQueue.addEventListener("click", () => showTab(tabQueue));
 
 function clearPollTimers() {
   pollTimers.forEach((timer) => clearInterval(timer));
@@ -52,9 +68,8 @@ function getSelectedGridNames() {
 }
 
 function inferGridSourceSrs(gridName) {
-  const upperGridName = gridName.toUpperCase();
-  const prefix = Object.keys(gridSourceSrs).find((item) => upperGridName.startsWith(item));
-  return prefix ? gridSourceSrs[prefix] : "";
+  const match = gridName.toUpperCase().match(gridPrefixPattern);
+  return match ? gridNumberSrs[match[1]] || "" : "";
 }
 
 function updateSourceProjectionPreview() {
@@ -64,7 +79,7 @@ function updateSourceProjectionPreview() {
 
   if (selectedGrids.length === 0) {
     sourceSrs.value = "";
-    sourceSrsHint.textContent = "A origem e o destino serão inferidos pelo prefixo SF-22 ou SF-23.";
+    sourceSrsHint.textContent = "A origem e o destino serão inferidos pelo prefixo S?-22 ou S?-23 (a segunda letra pode variar).";
     return;
   }
 
@@ -337,5 +352,86 @@ csvForm.addEventListener("submit", (event) => {
   event.preventDefault();
   submitCsvBatch(false);
 });
+
+// --- Fila de processamento ---
+function formatDateTime(isoString) {
+  if (!isoString) return "-";
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("pt-BR");
+}
+
+async function showErrorLog(jobId, filename) {
+  errorLogFilename.textContent = filename;
+  errorLogContent.textContent = "Carregando log...";
+  errorLogDialog.showModal();
+  try {
+    const response = await fetch(`/api/jobs/${jobId}`);
+    if (!response.ok) {
+      throw new Error("Falha ao consultar o job.");
+    }
+    const data = await response.json();
+    errorLogContent.textContent = data.error_log || data.message || "Nenhum log disponível.";
+  } catch (error) {
+    errorLogContent.textContent = `Não foi possível carregar o log: ${error.message}`;
+  }
+}
+
+closeErrorLogButton.addEventListener("click", () => errorLogDialog.close());
+
+function renderQueueTable(jobs) {
+  if (jobs.length === 0) {
+    queueTableBody.innerHTML = '<tr><td colspan="4" class="empty-state">Nenhum job na fila de processamento.</td></tr>';
+    return;
+  }
+
+  queueTableBody.innerHTML = "";
+  jobs.forEach((job) => {
+    const row = document.createElement("tr");
+
+    const fileCell = document.createElement("td");
+    fileCell.textContent = job.filename;
+    row.appendChild(fileCell);
+
+    const statusCell = document.createElement("td");
+    const badge = document.createElement("span");
+    badge.className = `badge ${job.status}`;
+    badge.textContent = job.status;
+    statusCell.appendChild(badge);
+    row.appendChild(statusCell);
+
+    const completedCell = document.createElement("td");
+    completedCell.textContent = formatDateTime(job.completed_at);
+    row.appendChild(completedCell);
+
+    const logCell = document.createElement("td");
+    if (job.status === "failed" && job.has_error_log) {
+      const logButton = document.createElement("button");
+      logButton.type = "button";
+      logButton.className = "secondary-button log-button";
+      logButton.textContent = "Ver log";
+      logButton.addEventListener("click", () => showErrorLog(job.id, job.filename));
+      logCell.appendChild(logButton);
+    } else {
+      logCell.textContent = "-";
+    }
+    row.appendChild(logCell);
+
+    queueTableBody.appendChild(row);
+  });
+}
+
+async function refreshQueue() {
+  try {
+    const response = await fetch("/api/jobs");
+    if (!response.ok) {
+      throw new Error("Falha ao consultar a fila de processamento.");
+    }
+    const data = await response.json();
+    renderQueueTable(data.jobs || []);
+  } catch (error) {
+    queueTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">${error.message}</td></tr>`;
+  }
+}
 
 updateSourceProjectionPreview();
