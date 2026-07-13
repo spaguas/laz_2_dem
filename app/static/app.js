@@ -290,7 +290,7 @@ function startBatchPolling(batchId, totalFromCsv) {
   batchPollTimer = setInterval(poll, 3000);
 }
 
-async function submitCsvBatch(approveReprocess = false) {
+async function submitCsvBatch() {
   const fileInput = document.getElementById("csvFile");
   if (!fileInput.files.length) {
     showNotice("Selecione um arquivo CSV.");
@@ -298,7 +298,7 @@ async function submitCsvBatch(approveReprocess = false) {
   }
 
   const formData = new FormData(csvForm);
-  formData.set("approve_reprocess", approveReprocess ? "true" : "false");
+  formData.set("approve_reprocess", "false");
 
   showNotice("Enviando CSV...");
 
@@ -306,14 +306,13 @@ async function submitCsvBatch(approveReprocess = false) {
     const response = await fetch("/api/batch", { method: "POST", body: formData });
     const data = await response.json();
 
-    if (response.status === 409 && data.reprocess_required) {
-      showNotice(data.detail);
-      openReprocessDialogCsv(data.grids || []);
+    if (!response.ok) {
+      showNotice(data.detail || "Falha ao processar CSV.");
       return;
     }
 
-    if (!response.ok) {
-      showNotice(data.detail || "Falha ao processar CSV.");
+    if (!data.batch_id) {
+      showNotice(data.detail || "Nenhum grid novo para processar.");
       return;
     }
 
@@ -321,9 +320,18 @@ async function submitCsvBatch(approveReprocess = false) {
     jobStatusList.innerHTML = "";
     showNotice(data.message);
 
-    if (data.errors && data.errors.length > 0) {
+    const skipped = data.skipped || [];
+    const errors = data.errors || [];
+    if (errors.length > 0 || skipped.length > 0) {
       batchErrors.classList.remove("hidden");
-      batchErrors.innerHTML = `<strong>Arquivos ignorados (${data.errors.length}):</strong><ul>${data.errors.map((e) => `<li>${e.filename}: ${e.error}</li>`).join("")}</ul>`;
+      let html = "";
+      if (skipped.length > 0) {
+        html += `<strong>Já processados e ignorados (${skipped.length}):</strong><ul>${skipped.map((g) => `<li>${g}</li>`).join("")}</ul>`;
+      }
+      if (errors.length > 0) {
+        html += `<strong>Arquivos ignorados (${errors.length}):</strong><ul>${errors.map((e) => `<li>${e.filename}: ${e.error}</li>`).join("")}</ul>`;
+      }
+      batchErrors.innerHTML = html;
     } else {
       batchErrors.classList.add("hidden");
     }
@@ -334,23 +342,9 @@ async function submitCsvBatch(approveReprocess = false) {
   }
 }
 
-function openReprocessDialogCsv(grids) {
-  reprocessGridList.innerHTML = "";
-  grids.forEach((grid) => {
-    const item = document.createElement("li");
-    item.textContent = grid;
-    reprocessGridList.appendChild(item);
-  });
-  confirmReprocessButton.onclick = () => {
-    reprocessDialog.close();
-    submitCsvBatch(true);
-  };
-  reprocessDialog.showModal();
-}
-
 csvForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  submitCsvBatch(false);
+  submitCsvBatch();
 });
 
 // --- Fila de processamento ---

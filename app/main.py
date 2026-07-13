@@ -313,14 +313,20 @@ async def create_batch(
 
     valid_names = [name for name, _, _ in valid_paths]
     processed_grids = find_processed_grids(valid_names)
+    skipped_grids: list[str] = []
     if processed_grids and not approve_reprocess:
+        skipped_grids = processed_grids
+        processed_set = set(processed_grids)
+        valid_paths = [item for item in valid_paths if item[0] not in processed_set]
+
+    if not valid_paths:
         return JSONResponse(
             {
-                "detail": "Um ou mais grids do CSV já foram processados.",
-                "reprocess_required": True,
-                "grids": processed_grids,
+                "detail": "Todos os grids do CSV já foram processados anteriormente.",
+                "skipped": skipped_grids,
+                "errors": errors,
             },
-            status_code=409,
+            status_code=200,
         )
 
     batch_id = str(uuid.uuid4())
@@ -349,13 +355,18 @@ async def create_batch(
         worker.enqueue(job_id)
         created_jobs.append({"id": job_id, "filename": name, "status": "queued"})
 
+    message = f"{len(created_jobs)} grid(s) agendado(s) de {len(filenames)} linha(s) no CSV."
+    if skipped_grids:
+        message += f" {len(skipped_grids)} grid(s) já processado(s) foram ignorado(s)."
+
     return JSONResponse(
         {
             "batch_id": batch_id,
             "total": len(filenames),
             "queued": len(created_jobs),
+            "skipped": skipped_grids,
             "errors": errors,
-            "message": f"{len(created_jobs)} grid(s) agendado(s) de {len(filenames)} linha(s) no CSV.",
+            "message": message,
         },
         status_code=202,
     )
