@@ -41,6 +41,10 @@ def build_pipeline(
             "type": "filters.range",
             "limits": "NumberOfReturns[1:15]",
         },
+        {
+            "type": "filters.sample",
+            "radius": pixel_size / 3,
+        },
     ]
 
     if mode == "conservador":
