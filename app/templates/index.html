@@ -4,7 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Processamento de Nuvem de Pontos</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -90,7 +89,6 @@
           <div class="method-tabs">
             <button type="button" id="methodCoord" class="tab-btn active" data-method="coord">Coordenadas</button>
             <button type="button" id="methodCode" class="tab-btn" data-method="code">Código UC</button>
-            <button type="button" id="methodMap" class="tab-btn" data-method="map">Mapa</button>
           </div>
 
           <div id="baciaMethodCoord" class="bacia-method">
@@ -113,15 +111,14 @@
             <button type="button" id="baciaLookupUcButton" class="secondary-button">Buscar bacia</button>
           </div>
 
-          <div id="baciaMethodMap" class="bacia-method hidden">
-            <p class="field-hint">Clique em uma bacia no mapa para selecioná-la.</p>
-            <div id="baciaMap"></div>
-          </div>
-
           <p id="baciaLookupMessage" class="field-hint"></p>
 
           <div id="baciaResult" class="bacia-result hidden">
             <p id="baciaResultText"></p>
+            <div id="baciaMissingTilesWarning" class="bacia-warning hidden">
+              <p>Tiles ausentes no servidor (não serão incluídos no merge):</p>
+              <ul id="baciaMissingTilesList"></ul>
+            </div>
             <button type="button" id="baciaScheduleButton">Agendar merge</button>
           </div>
         </div>
@@ -213,7 +210,6 @@
       window.GRID_PREFIX_PATTERN = {{ grid_prefix_pattern | tojson }};
       window.GRID_NUMBER_SRS = {{ grid_number_srs | tojson }};
     </script>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="/static/app.js?v={{ static_version }}"></script>
   </body>
 </html>

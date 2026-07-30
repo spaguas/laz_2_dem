@@ -32,7 +32,6 @@ const closeErrorLogButton = document.getElementById("closeErrorLogButton");
 const methodButtons = document.querySelectorAll("#panelBacia .method-tabs .tab-btn");
 const baciaMethodCoord = document.getElementById("baciaMethodCoord");
 const baciaMethodCode = document.getElementById("baciaMethodCode");
-const baciaMethodMap = document.getElementById("baciaMethodMap");
 const baciaLat = document.getElementById("baciaLat");
 const baciaLon = document.getElementById("baciaLon");
 const baciaLookupCoordButton = document.getElementById("baciaLookupCoordButton");
@@ -41,6 +40,8 @@ const baciaLookupUcButton = document.getElementById("baciaLookupUcButton");
 const baciaLookupMessage = document.getElementById("baciaLookupMessage");
 const baciaResult = document.getElementById("baciaResult");
 const baciaResultText = document.getElementById("baciaResultText");
+const baciaMissingTilesWarning = document.getElementById("baciaMissingTilesWarning");
+const baciaMissingTilesList = document.getElementById("baciaMissingTilesList");
 const baciaScheduleButton = document.getElementById("baciaScheduleButton");
 const mdtBaciaDialog = document.getElementById("mdtBaciaDialog");
 const mdtBaciaUcLabel = document.getElementById("mdtBaciaUcLabel");
@@ -53,10 +54,6 @@ const confirmMdtBaciaButton = document.getElementById("confirmMdtBaciaButton");
 
 let selectedBaciaUc = null;
 let mdtBaciaFileExists = false;
-let baciaMap = null;
-let baciaGeojsonLayer = null;
-let selectedMapLayer = null;
-let resolutionCheckTimer = null;
 
 const gridNumberSrs = window.GRID_NUMBER_SRS || {};
 const gridPrefixPattern = new RegExp(window.GRID_PREFIX_PATTERN || "^S[A-Z]-(22|23)-", "i");
@@ -84,10 +81,6 @@ function showTab(activeTab) {
   } else if (queuePollTimer) {
     clearInterval(queuePollTimer);
     queuePollTimer = null;
-  }
-
-  if (activeTab === tabBacia && baciaMethodMap.classList.contains("hidden") === false) {
-    initBaciaMap();
   }
 }
 
@@ -487,11 +480,6 @@ function switchBaciaMethod(method) {
   methodButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.method === method));
   baciaMethodCoord.classList.toggle("hidden", method !== "coord");
   baciaMethodCode.classList.toggle("hidden", method !== "code");
-  baciaMethodMap.classList.toggle("hidden", method !== "map");
-
-  if (method === "map") {
-    initBaciaMap();
-  }
 }
 
 methodButtons.forEach((btn) => {
@@ -505,8 +493,17 @@ function showBaciaMessage(message) {
 function showBaciaResult(uc, data) {
   selectedBaciaUc = uc;
   const areaText = data.upst_area != null ? `${data.upst_area.toFixed(2)} km²` : "não informada";
-  baciaResultText.textContent = `Bacia UC ${uc} · Área de contribuição: ${areaText} · Tiles MDT na bacia: ${data.tile_count}`;
+  baciaResultText.textContent = `Bacia UC ${uc} · Área de contribuição: ${areaText} · Tiles MDT na bacia: ${data.tiles_found}/${data.tile_count}`;
   baciaResult.classList.remove("hidden");
+
+  const missingTiles = data.missing_tiles || [];
+  baciaMissingTilesWarning.classList.toggle("hidden", missingTiles.length === 0);
+  baciaMissingTilesList.innerHTML = "";
+  missingTiles.forEach((name) => {
+    const item = document.createElement("li");
+    item.textContent = name;
+    baciaMissingTilesList.appendChild(item);
+  });
 }
 
 async function lookupByUc(uc) {
@@ -559,48 +556,6 @@ baciaLookupUcButton.addEventListener("click", () => {
   }
   lookupByUc(uc);
 });
-
-// --- Mapa (Leaflet) ---
-function baciaLayerStyle(selected) {
-  return selected
-    ? { color: "#23d18b", weight: 3, fillColor: "#23d18b", fillOpacity: 0.35 }
-    : { color: "#4fa3d1", weight: 1, fillColor: "#4fa3d1", fillOpacity: 0.08 };
-}
-
-async function initBaciaMap() {
-  if (baciaMap || typeof L === "undefined") {
-    return;
-  }
-
-  baciaMap = L.map("baciaMap").setView([-22.4, -48.5], 6);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 18,
-    attribution: "&copy; OpenStreetMap contributors",
-  }).addTo(baciaMap);
-
-  try {
-    const response = await fetch("/api/bacias/geojson");
-    if (!response.ok) {
-      throw new Error("Falha ao carregar as bacias no mapa.");
-    }
-    const geojson = await response.json();
-    baciaGeojsonLayer = L.geoJSON(geojson, {
-      style: () => baciaLayerStyle(false),
-      onEachFeature: (feature, layer) => {
-        layer.on("click", () => {
-          if (selectedMapLayer) {
-            selectedMapLayer.setStyle(baciaLayerStyle(false));
-          }
-          layer.setStyle(baciaLayerStyle(true));
-          selectedMapLayer = layer;
-          lookupByUc(feature.properties.uc);
-        });
-      },
-    }).addTo(baciaMap);
-  } catch (error) {
-    showBaciaMessage(error.message);
-  }
-}
 
 // --- Dialog de agendamento do merge ---
 async function refreshExistingWarning() {
@@ -678,7 +633,7 @@ async function submitMdtBaciaJob() {
     clearPollTimers();
     let message = data.message;
     if (data.missing_tiles && data.missing_tiles.length > 0) {
-      message += ` (${data.missing_tiles.length} tile(s) não encontrado(s) no servidor)`;
+      message += ` Tiles ausentes no servidor (ignorados): ${data.missing_tiles.join(", ")}.`;
     }
     showNotice(message);
     createJobCard(data);

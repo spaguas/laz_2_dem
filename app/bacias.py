@@ -83,12 +83,6 @@ def get_bacia_by_point(lat: float, lon: float) -> Optional[BaciaInfo]:
     return _row_to_bacia_info(matches.iloc[0])
 
 
-@lru_cache(maxsize=1)
-def get_bacias_geojson() -> str:
-    gdf = load_bacias()[["UC", "geometry"]].rename(columns={"UC": "uc"})
-    return gdf.to_json()
-
-
 def resolve_tile_names(geometry: BaseGeometry) -> list[str]:
     gdf = load_tiles()
     candidate_idx = list(gdf.sindex.query(geometry, predicate="intersects"))

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -227,6 +227,7 @@ def get_job(job_id: str) -> JSONResponse:
             "error_log": job.error_log,
             "download_url": f"/api/jobs/{job.id}/download" if job.status == "completed" else None,
             "kind": job.kind,
+            "missing_tiles": (job.extra or {}).get("missing_tiles") if job.kind == "mdt_bacia" else None,
         }
     )
 
@@ -250,16 +251,14 @@ def download_result(job_id: str) -> FileResponse:
 
 def _bacia_response(info: bacias.BaciaInfo) -> dict:
     tile_names = bacias.resolve_tile_names(info.geometry)
+    found, missing = mdt_bacia.resolve_tile_files(tile_names, MDT_DIR)
     return {
         "uc": info.uc,
         "upst_area": info.upst_area,
         "tile_count": len(tile_names),
+        "tiles_found": len(found),
+        "missing_tiles": missing,
     }
-
-
-@app.get("/api/bacias/geojson")
-def bacias_geojson() -> Response:
-    return Response(content=bacias.get_bacias_geojson(), media_type="application/json")
 
 
 @app.get("/api/bacias/by-uc/{uc}")

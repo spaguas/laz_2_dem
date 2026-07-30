@@ -123,7 +123,10 @@ class JobWorker:
             job_id,
             status="processing",
             progress=10,
-            message=f"Resolvendo tiles da bacia ({len(tile_files)} encontrado(s), {len(missing_tiles)} ausente(s))",
+            message=(
+                f"Resolvendo tiles da bacia ({len(tile_files)} encontrado(s))."
+                + (f" Ausentes no servidor: {', '.join(missing_tiles)}." if missing_tiles else "")
+            ),
         )
 
         try:
@@ -152,7 +155,7 @@ class JobWorker:
 
             message = "Merge concluído com sucesso."
             if missing_tiles:
-                message += f" {len(missing_tiles)} tile(s) não encontrado(s) no servidor foram ignorados."
+                message += f" Tiles ausentes no servidor (ignorados): {', '.join(missing_tiles)}."
 
             self.store.update_job(
                 job_id,
