@@ -16,6 +16,9 @@ DEFAULT_TARGET_SRS = "EPSG:31982"
 TILE_EXTENSIONS = (".tif", ".tiff")
 MERGE_NODATA = -32768
 CBLEND_PIXELS = 20
+TILE_TIMEOUT_SECONDS = 300
+FAST_MERGE_TIMEOUT_SECONDS = 3600
+GTIFF_CREATION_OPTIONS = ["-co", "COMPRESS=LZW", "-co", "TILED=YES", "-co", "BLOCKXSIZE=256", "-co", "BLOCKYSIZE=256"]
 
 MergeMode = Literal["fast", "blend"]
 ProgressCallback = Callable[[int, int], None]
@@ -72,8 +75,15 @@ def _find_bin(name: str) -> str:
     raise RuntimeError(f"Executavel '{name}' nao encontrado no container.")
 
 
-def _run(cmd: list[str]) -> subprocess.CompletedProcess:
-    result = subprocess.run(cmd, check=False, capture_output=True, text=True)  # noqa: S603
+def _run(cmd: list[str], timeout: Optional[float] = None) -> subprocess.CompletedProcess:
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd, check=False, capture_output=True, text=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"Comando {cmd[0]} excedeu o tempo limite de {timeout}s e foi encerrado: {' '.join(cmd)}"
+        ) from exc
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
@@ -83,7 +93,7 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
 
 
 def _read_extent(path: Path, gdalinfo_bin: str) -> tuple[float, float, float, float]:
-    result = _run([gdalinfo_bin, "-json", str(path)])
+    result = _run([gdalinfo_bin, "-json", str(path)], timeout=60)
     info = json.loads(result.stdout)
     corners = info["cornerCoordinates"]
     xmin, ymax = corners["upperLeft"]
@@ -138,11 +148,11 @@ def _merge_fast(
         "-tr", str(resolution), str(resolution),
         "-r", "bilinear",
         "-dstnodata", str(MERGE_NODATA),
-        "-co", "COMPRESS=LZW",
+        *GTIFF_CREATION_OPTIONS,
         *[str(path) for path in tile_paths],
         str(output_path),
     ]
-    _run(cmd)
+    _run(cmd, timeout=FAST_MERGE_TIMEOUT_SECONDS)
 
 
 def _merge_blend(
@@ -177,12 +187,15 @@ def _merge_blend(
             cmd = [gdalwarp_bin]
             if i == 0:
                 # Only the first call may pass dataset-creation options (gdalwarp
-                # refuses them once the destination file already exists).
+                # refuses them once the destination file already exists). TILED=YES
+                # is essential here: a striped (row-based) GeoTIFF makes every later
+                # partial write re-decompress/re-compress whole-width strips, which
+                # gets ruinously slow as the mosaic fills up over hundreds of tiles.
                 cmd += [
                     "-t_srs", target_srs,
                     "-tr", str(resolution), str(resolution),
                     "-dstnodata", str(MERGE_NODATA),
-                    "-co", "COMPRESS=LZW",
+                    *GTIFF_CREATION_OPTIONS,
                     "-te", str(union_xmin), str(union_ymin), str(union_xmax), str(union_ymax),
                 ]
             cmd += [
@@ -192,7 +205,7 @@ def _merge_blend(
                 "-cblend", str(CBLEND_PIXELS),
             ]
             cmd += [str(tile), str(output_path)]
-            _run(cmd)
+            _run(cmd, timeout=TILE_TIMEOUT_SECONDS)
             if on_progress:
                 on_progress(i + 1, total)
 
