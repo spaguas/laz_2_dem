@@ -10,9 +10,11 @@ const confirmReprocessButton = document.getElementById("confirmReprocessButton")
 
 const tabManual = document.getElementById("tabManual");
 const tabCsv = document.getElementById("tabCsv");
+const tabBacia = document.getElementById("tabBacia");
 const tabQueue = document.getElementById("tabQueue");
 const panelManual = document.getElementById("panelManual");
 const panelCsv = document.getElementById("panelCsv");
+const panelBacia = document.getElementById("panelBacia");
 const panelQueue = document.getElementById("panelQueue");
 const queueTableBody = document.getElementById("queueTableBody");
 const csvForm = document.getElementById("csvForm");
@@ -26,6 +28,36 @@ const errorLogFilename = document.getElementById("errorLogFilename");
 const errorLogContent = document.getElementById("errorLogContent");
 const closeErrorLogButton = document.getElementById("closeErrorLogButton");
 
+// --- Bacia hidrográfica (MDT por bacia) ---
+const methodButtons = document.querySelectorAll("#panelBacia .method-tabs .tab-btn");
+const baciaMethodCoord = document.getElementById("baciaMethodCoord");
+const baciaMethodCode = document.getElementById("baciaMethodCode");
+const baciaMethodMap = document.getElementById("baciaMethodMap");
+const baciaLat = document.getElementById("baciaLat");
+const baciaLon = document.getElementById("baciaLon");
+const baciaLookupCoordButton = document.getElementById("baciaLookupCoordButton");
+const baciaUcInput = document.getElementById("baciaUcInput");
+const baciaLookupUcButton = document.getElementById("baciaLookupUcButton");
+const baciaLookupMessage = document.getElementById("baciaLookupMessage");
+const baciaResult = document.getElementById("baciaResult");
+const baciaResultText = document.getElementById("baciaResultText");
+const baciaScheduleButton = document.getElementById("baciaScheduleButton");
+const mdtBaciaDialog = document.getElementById("mdtBaciaDialog");
+const mdtBaciaUcLabel = document.getElementById("mdtBaciaUcLabel");
+const mdtBaciaResolution = document.getElementById("mdtBaciaResolution");
+const mdtBaciaSaveToServer = document.getElementById("mdtBaciaSaveToServer");
+const mdtBaciaExistingWarning = document.getElementById("mdtBaciaExistingWarning");
+const mdtBaciaExistingPath = document.getElementById("mdtBaciaExistingPath");
+const cancelMdtBaciaButton = document.getElementById("cancelMdtBaciaButton");
+const confirmMdtBaciaButton = document.getElementById("confirmMdtBaciaButton");
+
+let selectedBaciaUc = null;
+let mdtBaciaFileExists = false;
+let baciaMap = null;
+let baciaGeojsonLayer = null;
+let selectedMapLayer = null;
+let resolutionCheckTimer = null;
+
 const gridNumberSrs = window.GRID_NUMBER_SRS || {};
 const gridPrefixPattern = new RegExp(window.GRID_PREFIX_PATTERN || "^S[A-Z]-(22|23)-", "i");
 const pollTimers = new Map();
@@ -38,9 +70,10 @@ if (!gridForm || !gridSelect) {
 
 // --- Tab switching ---
 function showTab(activeTab) {
-  [tabManual, tabCsv, tabQueue].forEach((tab) => tab.classList.toggle("active", tab === activeTab));
+  [tabManual, tabCsv, tabBacia, tabQueue].forEach((tab) => tab.classList.toggle("active", tab === activeTab));
   panelManual.classList.toggle("hidden", activeTab !== tabManual);
   panelCsv.classList.toggle("hidden", activeTab !== tabCsv);
+  panelBacia.classList.toggle("hidden", activeTab !== tabBacia);
   panelQueue.classList.toggle("hidden", activeTab !== tabQueue);
 
   if (activeTab === tabQueue) {
@@ -52,10 +85,15 @@ function showTab(activeTab) {
     clearInterval(queuePollTimer);
     queuePollTimer = null;
   }
+
+  if (activeTab === tabBacia && baciaMethodMap.classList.contains("hidden") === false) {
+    initBaciaMap();
+  }
 }
 
 tabManual.addEventListener("click", () => showTab(tabManual));
 tabCsv.addEventListener("click", () => showTab(tabCsv));
+tabBacia.addEventListener("click", () => showTab(tabBacia));
 tabQueue.addEventListener("click", () => showTab(tabQueue));
 
 function clearPollTimers() {
@@ -123,6 +161,7 @@ function createJobCard(job) {
     </div>
     <p class="job-message"></p>
     <p class="job-srs"></p>
+    <div class="spinner hidden"></div>
     <div class="progress-track">
       <div class="progress-bar"></div>
     </div>
@@ -145,6 +184,11 @@ function setJobView(data) {
   badge.className = `badge ${data.status}`;
   article.querySelector(".job-message").textContent = data.message;
   article.querySelector(".job-srs").textContent = `CRS: ${data.target_srs || data.source_srs || "-"}`;
+
+  const isIndeterminate = data.kind === "mdt_bacia" && data.status === "processing";
+  article.querySelector(".spinner").classList.toggle("hidden", !isIndeterminate);
+  article.querySelector(".progress-track").classList.toggle("hidden", isIndeterminate);
+  article.querySelector(".progress-text").classList.toggle("hidden", isIndeterminate);
   article.querySelector(".progress-bar").style.width = `${data.progress}%`;
   article.querySelector(".progress-text").textContent = `${data.progress}%`;
 
@@ -429,3 +473,223 @@ async function refreshQueue() {
 }
 
 updateSourceProjectionPreview();
+
+// --- MDT por bacia hidrográfica ---
+function debounce(fn, delay) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
+}
+
+function switchBaciaMethod(method) {
+  methodButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.method === method));
+  baciaMethodCoord.classList.toggle("hidden", method !== "coord");
+  baciaMethodCode.classList.toggle("hidden", method !== "code");
+  baciaMethodMap.classList.toggle("hidden", method !== "map");
+
+  if (method === "map") {
+    initBaciaMap();
+  }
+}
+
+methodButtons.forEach((btn) => {
+  btn.addEventListener("click", () => switchBaciaMethod(btn.dataset.method));
+});
+
+function showBaciaMessage(message) {
+  baciaLookupMessage.textContent = message || "";
+}
+
+function showBaciaResult(uc, data) {
+  selectedBaciaUc = uc;
+  const areaText = data.upst_area != null ? `${data.upst_area.toFixed(2)} km²` : "não informada";
+  baciaResultText.textContent = `Bacia UC ${uc} · Área de contribuição: ${areaText} · Tiles MDT na bacia: ${data.tile_count}`;
+  baciaResult.classList.remove("hidden");
+}
+
+async function lookupByUc(uc) {
+  showBaciaMessage("Buscando bacia...");
+  baciaResult.classList.add("hidden");
+  try {
+    const response = await fetch(`/api/bacias/by-uc/${encodeURIComponent(uc)}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || "Bacia não encontrada.");
+    }
+    showBaciaMessage("");
+    showBaciaResult(data.uc, data);
+  } catch (error) {
+    showBaciaMessage(error.message);
+  }
+}
+
+async function lookupByPoint(lat, lon) {
+  showBaciaMessage("Buscando bacia...");
+  baciaResult.classList.add("hidden");
+  try {
+    const response = await fetch(`/api/bacias/by-point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || "Nenhuma bacia encontrada para essa coordenada.");
+    }
+    showBaciaMessage("");
+    showBaciaResult(data.uc, data);
+  } catch (error) {
+    showBaciaMessage(error.message);
+  }
+}
+
+baciaLookupCoordButton.addEventListener("click", () => {
+  const lat = parseFloat(baciaLat.value);
+  const lon = parseFloat(baciaLon.value);
+  if (Number.isNaN(lat) || Number.isNaN(lon)) {
+    showBaciaMessage("Informe latitude e longitude válidas.");
+    return;
+  }
+  lookupByPoint(lat, lon);
+});
+
+baciaLookupUcButton.addEventListener("click", () => {
+  const uc = parseInt(baciaUcInput.value, 10);
+  if (Number.isNaN(uc)) {
+    showBaciaMessage("Informe um código UC válido.");
+    return;
+  }
+  lookupByUc(uc);
+});
+
+// --- Mapa (Leaflet) ---
+function baciaLayerStyle(selected) {
+  return selected
+    ? { color: "#23d18b", weight: 3, fillColor: "#23d18b", fillOpacity: 0.35 }
+    : { color: "#4fa3d1", weight: 1, fillColor: "#4fa3d1", fillOpacity: 0.08 };
+}
+
+async function initBaciaMap() {
+  if (baciaMap || typeof L === "undefined") {
+    return;
+  }
+
+  baciaMap = L.map("baciaMap").setView([-22.4, -48.5], 6);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 18,
+    attribution: "&copy; OpenStreetMap contributors",
+  }).addTo(baciaMap);
+
+  try {
+    const response = await fetch("/api/bacias/geojson");
+    if (!response.ok) {
+      throw new Error("Falha ao carregar as bacias no mapa.");
+    }
+    const geojson = await response.json();
+    baciaGeojsonLayer = L.geoJSON(geojson, {
+      style: () => baciaLayerStyle(false),
+      onEachFeature: (feature, layer) => {
+        layer.on("click", () => {
+          if (selectedMapLayer) {
+            selectedMapLayer.setStyle(baciaLayerStyle(false));
+          }
+          layer.setStyle(baciaLayerStyle(true));
+          selectedMapLayer = layer;
+          lookupByUc(feature.properties.uc);
+        });
+      },
+    }).addTo(baciaMap);
+  } catch (error) {
+    showBaciaMessage(error.message);
+  }
+}
+
+// --- Dialog de agendamento do merge ---
+async function refreshExistingWarning() {
+  const uc = selectedBaciaUc;
+  const resolution = parseFloat(mdtBaciaResolution.value) || 1;
+  try {
+    const response = await fetch(`/api/mdt-bacia/check?uc=${encodeURIComponent(uc)}&resolution=${encodeURIComponent(resolution)}`);
+    const data = await response.json();
+    mdtBaciaFileExists = Boolean(data.exists);
+    mdtBaciaExistingWarning.classList.toggle("hidden", !mdtBaciaFileExists);
+    if (mdtBaciaFileExists) {
+      mdtBaciaExistingPath.textContent = `${data.filename} (${data.path})`;
+      confirmMdtBaciaButton.textContent = "Processar mesmo assim";
+    } else {
+      confirmMdtBaciaButton.textContent = "Agendar merge";
+    }
+  } catch (_) {
+    /* silent */
+  }
+}
+
+const debouncedRefreshExistingWarning = debounce(refreshExistingWarning, 400);
+mdtBaciaResolution.addEventListener("input", debouncedRefreshExistingWarning);
+
+function openMdtBaciaDialog(uc) {
+  mdtBaciaUcLabel.textContent = uc;
+  mdtBaciaResolution.value = "1";
+  mdtBaciaSaveToServer.checked = false;
+  mdtBaciaExistingWarning.classList.add("hidden");
+  confirmMdtBaciaButton.textContent = "Agendar merge";
+  refreshExistingWarning();
+  mdtBaciaDialog.showModal();
+}
+
+baciaScheduleButton.addEventListener("click", () => {
+  if (selectedBaciaUc == null) {
+    return;
+  }
+  openMdtBaciaDialog(selectedBaciaUc);
+});
+
+cancelMdtBaciaButton.addEventListener("click", () => {
+  mdtBaciaDialog.close();
+});
+
+async function submitMdtBaciaJob() {
+  const uc = selectedBaciaUc;
+  const resolution = parseFloat(mdtBaciaResolution.value) || 1;
+  const saveToServer = mdtBaciaSaveToServer.checked;
+  const approveOverwrite = mdtBaciaFileExists;
+
+  const formData = new FormData();
+  formData.set("uc", uc);
+  formData.set("resolution", resolution);
+  formData.set("save_to_server", saveToServer ? "true" : "false");
+  formData.set("approve_overwrite", approveOverwrite ? "true" : "false");
+
+  try {
+    const response = await fetch("/api/mdt-bacia/jobs", { method: "POST", body: formData });
+    const data = await response.json();
+
+    if (response.status === 409 && data.reprocess_required) {
+      mdtBaciaFileExists = true;
+      mdtBaciaExistingWarning.classList.remove("hidden");
+      mdtBaciaExistingPath.textContent = `${data.filename} (${data.path})`;
+      confirmMdtBaciaButton.textContent = "Processar mesmo assim";
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Falha ao agendar o merge da bacia.");
+    }
+
+    mdtBaciaDialog.close();
+    clearPollTimers();
+    let message = data.message;
+    if (data.missing_tiles && data.missing_tiles.length > 0) {
+      message += ` (${data.missing_tiles.length} tile(s) não encontrado(s) no servidor)`;
+    }
+    showNotice(message);
+    createJobCard(data);
+    const timer = setInterval(() => pollJob(data.id), 2000);
+    pollTimers.set(data.id, timer);
+    pollJob(data.id);
+  } catch (error) {
+    showBaciaMessage(error.message);
+  }
+}
+
+confirmMdtBaciaButton.addEventListener("click", () => {
+  submitMdtBaciaJob();
+});

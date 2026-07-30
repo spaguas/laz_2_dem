@@ -37,3 +37,15 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 9090
 3. Worker em thread de background executa pipeline PDAL.
 4. Frontend consulta `/api/jobs/{job_id}` a cada 2 segundos.
 5. Ao concluir, o usuário baixa o `.tif` gerado.
+
+## MDT por bacia hidrográfica
+
+Aba "MDT por bacia": o usuário seleciona uma bacia por coordenadas, código UC ou clicando no
+mapa; o app resolve os tiles MDT (`.tif`) que intersectam a bacia (via `app/data/gpkg/`) e agenda
+um merge assíncrono (`gdalwarp`) com a resolução espacial escolhida, gerando
+`MDT_BACIA_{UC}_{resolução}m.tif`.
+
+Variáveis de ambiente novas (mesmo padrão de `NUVENS_HOST_PATH`):
+- `MDT_HOST_PATH`: pasta com os tiles MDT de origem (produção: `/home/sf-maps/MDT`).
+- `MDT_BACIA_HOST_PATH`: pasta acessível fora do container para quem marcar "salvar cópia no
+  servidor" (produção: `/home/sf-maps/mdt_bacia`).

@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import queue
+import shutil
 import threading
 import traceback
 from pathlib import Path
+from typing import Optional
 
+from . import mdt_bacia
 from .laz2dem import process_laz_to_dem
-from .job_store import JobStore
+from .job_store import JobRecord, JobStore
 
 
 class JobWorker:
-    def __init__(self, store: JobStore) -> None:
+    def __init__(self, store: JobStore, mdt_bacia_dir: Optional[Path] = None) -> None:
         self.store = store
+        self.mdt_bacia_dir = mdt_bacia_dir
         self._queue: queue.Queue[str] = queue.Queue()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._running = False
@@ -38,6 +42,13 @@ class JobWorker:
         if job is None:
             return
 
+        if job.kind == "mdt_bacia":
+            self._process_mdt_bacia(job)
+        else:
+            self._process_laz2dem(job)
+
+    def _process_laz2dem(self, job: JobRecord) -> None:
+        job_id = job.id
         input_path = Path(job.input_path)
         output_path = Path(job.output_path)
 
@@ -95,5 +106,65 @@ class JobWorker:
                 status="failed",
                 progress=100,
                 message=f"Falha no processamento: {exc}",
+                error_log=traceback.format_exc(),
+            )
+
+    def _process_mdt_bacia(self, job: JobRecord) -> None:
+        job_id = job.id
+        output_path = Path(job.output_path)
+        extra = job.extra or {}
+        tile_files = [Path(p) for p in extra.get("tile_files", [])]
+        missing_tiles = extra.get("missing_tiles", [])
+        target_srs = extra.get("target_srs") or job.target_srs
+        resolution = extra.get("resolution", 1)
+        save_to_server = extra.get("save_to_server", False)
+
+        self.store.update_job(
+            job_id,
+            status="processing",
+            progress=10,
+            message=f"Resolvendo tiles da bacia ({len(tile_files)} encontrado(s), {len(missing_tiles)} ausente(s))",
+        )
+
+        try:
+            self.store.update_job(
+                job_id,
+                status="processing",
+                progress=40,
+                message=f"Mesclando {len(tile_files)} tile(s) com gdalwarp (CRS destino: {target_srs})",
+            )
+            mdt_bacia.merge_tiles(
+                tile_paths=tile_files,
+                output_path=output_path,
+                target_srs=target_srs,
+                resolution=resolution,
+            )
+
+            if save_to_server and self.mdt_bacia_dir is not None:
+                self.store.update_job(
+                    job_id,
+                    status="processing",
+                    progress=90,
+                    message="Copiando resultado para a pasta compartilhada do servidor",
+                )
+                self.mdt_bacia_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_path, self.mdt_bacia_dir / output_path.name)
+
+            message = "Merge concluído com sucesso."
+            if missing_tiles:
+                message += f" {len(missing_tiles)} tile(s) não encontrado(s) no servidor foram ignorados."
+
+            self.store.update_job(
+                job_id,
+                status="completed",
+                progress=100,
+                message=message,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.store.update_job(
+                job_id,
+                status="failed",
+                progress=100,
+                message=f"Falha no merge: {exc}",
                 error_log=traceback.format_exc(),
             )

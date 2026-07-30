@@ -23,6 +23,8 @@ class JobRecord:
     target_srs: str = "EPSG:4674"
     batch_id: Optional[str] = None
     error_log: Optional[str] = None
+    kind: str = "laz2dem"
+    extra: Optional[dict] = None
 
 
 class JobStore:
@@ -49,6 +51,8 @@ class JobStore:
             normalized.setdefault("target_srs", "EPSG:4674")
             normalized.setdefault("batch_id", None)
             normalized.setdefault("error_log", None)
+            normalized.setdefault("kind", "laz2dem")
+            normalized.setdefault("extra", None)
             job = JobRecord(**normalized)
             self._jobs[job.id] = job
 

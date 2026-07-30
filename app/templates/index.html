@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Processamento de Nuvem de Pontos</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -20,6 +21,7 @@
         <div class="upload-tabs">
           <button type="button" id="tabManual" class="tab-btn active">Seleção manual</button>
           <button type="button" id="tabCsv" class="tab-btn">Importar CSV</button>
+          <button type="button" id="tabBacia" class="tab-btn">MDT por bacia</button>
           <button type="button" id="tabQueue" class="tab-btn">Fila de processamento</button>
         </div>
 
@@ -84,6 +86,46 @@
           </div>
         </div>
 
+        <div id="panelBacia" class="hidden">
+          <div class="method-tabs">
+            <button type="button" id="methodCoord" class="tab-btn active" data-method="coord">Coordenadas</button>
+            <button type="button" id="methodCode" class="tab-btn" data-method="code">Código UC</button>
+            <button type="button" id="methodMap" class="tab-btn" data-method="map">Mapa</button>
+          </div>
+
+          <div id="baciaMethodCoord" class="bacia-method">
+            <div class="projection-grid">
+              <div>
+                <label for="baciaLat">Latitude (graus decimais)</label>
+                <input type="number" id="baciaLat" step="any" placeholder="-23.55" />
+              </div>
+              <div>
+                <label for="baciaLon">Longitude (graus decimais)</label>
+                <input type="number" id="baciaLon" step="any" placeholder="-46.63" />
+              </div>
+            </div>
+            <button type="button" id="baciaLookupCoordButton" class="secondary-button">Buscar bacia</button>
+          </div>
+
+          <div id="baciaMethodCode" class="bacia-method hidden">
+            <label for="baciaUcInput">Código UC da bacia</label>
+            <input type="number" id="baciaUcInput" placeholder="31770" />
+            <button type="button" id="baciaLookupUcButton" class="secondary-button">Buscar bacia</button>
+          </div>
+
+          <div id="baciaMethodMap" class="bacia-method hidden">
+            <p class="field-hint">Clique em uma bacia no mapa para selecioná-la.</p>
+            <div id="baciaMap"></div>
+          </div>
+
+          <p id="baciaLookupMessage" class="field-hint"></p>
+
+          <div id="baciaResult" class="bacia-result hidden">
+            <p id="baciaResultText"></p>
+            <button type="button" id="baciaScheduleButton">Agendar merge</button>
+          </div>
+        </div>
+
         <div id="panelQueue" class="hidden">
           <table class="queue-table">
             <thead>
@@ -128,6 +170,29 @@
         </form>
       </dialog>
 
+      <dialog id="mdtBaciaDialog" class="confirm-dialog">
+        <form method="dialog">
+          <h2>Agendar merge de MDT por bacia</h2>
+          <p>Bacia UC <strong id="mdtBaciaUcLabel"></strong></p>
+          <div>
+            <label for="mdtBaciaResolution">Resolução espacial (metros)</label>
+            <input type="number" id="mdtBaciaResolution" min="0.1" max="100" step="0.1" value="1" />
+          </div>
+          <label class="checkbox-field">
+            <input type="checkbox" id="mdtBaciaSaveToServer" />
+            Salvar cópia no servidor (pasta acessível fora do container)
+          </label>
+          <div id="mdtBaciaExistingWarning" class="bacia-warning hidden">
+            <p>Já existe um arquivo MDT_BACIA para esta bacia/resolução:</p>
+            <p id="mdtBaciaExistingPath" class="existing-path"></p>
+          </div>
+          <div class="dialog-actions">
+            <button id="cancelMdtBaciaButton" type="button" class="secondary-button">Cancelar</button>
+            <button id="confirmMdtBaciaButton" type="button">Agendar merge</button>
+          </div>
+        </form>
+      </dialog>
+
       <section class="panel jobs">
         <h2>Últimos processamentos</h2>
         <ul>
@@ -148,6 +213,7 @@
       window.GRID_PREFIX_PATTERN = {{ grid_prefix_pattern | tojson }};
       window.GRID_NUMBER_SRS = {{ grid_number_srs | tojson }};
     </script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="/static/app.js?v={{ static_version }}"></script>
   </body>
 </html>

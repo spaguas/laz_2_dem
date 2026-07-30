@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import csv
 import io
-import re
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from . import bacias, mdt_bacia
+from .grid_srs import GRID_NUMBER_SRS, GRID_PREFIX_PATTERN, infer_srs_from_name
 from .job_store import JobRecord, JobStore
 from .job_worker import JobWorker
 
@@ -20,12 +22,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 NUVENS_DIR = BASE_DIR / "app" / "nuvens"
 OUTPUT_DIR = BASE_DIR / "app" / "outputs"
 DATA_DIR = BASE_DIR / "app" / "data"
+MDT_DIR = Path(os.environ.get("MDT_HOST_PATH") or (BASE_DIR / "app" / "mdt_tiles"))
+MDT_BACIA_DIR = Path(os.environ.get("MDT_BACIA_HOST_PATH") or (BASE_DIR / "app" / "mdt_bacia"))
+GPKG_DIR = BASE_DIR / "app" / "data" / "gpkg"
 
-for directory in (NUVENS_DIR, OUTPUT_DIR, DATA_DIR):
+for directory in (NUVENS_DIR, OUTPUT_DIR, DATA_DIR, MDT_DIR, MDT_BACIA_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 store = JobStore(DATA_DIR / "jobs.json")
-worker = JobWorker(store)
+worker = JobWorker(store, mdt_bacia_dir=MDT_BACIA_DIR)
 
 app = FastAPI(title="Processador LAZ para GeoTIFF")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "app" / "static"), name="static")
@@ -39,13 +44,6 @@ PROJECTION_OPTIONS = [
     {"value": "EPSG:31984", "label": "SIRGAS 2000 / UTM 24S (EPSG:31984)"},
     {"value": "EPSG:31985", "label": "SIRGAS 2000 / UTM 25S (EPSG:31985)"},
 ]
-# A segunda letra do prefixo (ex.: o "F" em "SF-22-") pode variar; quem define o EPSG
-# é apenas o número (22 ou 23), então o padrão aceita qualquer letra nessa posição.
-GRID_PREFIX_PATTERN = re.compile(r"^S[A-Z]-(22|23)-")
-GRID_NUMBER_SRS = {
-    "22": "EPSG:31982",
-    "23": "EPSG:31983",
-}
 
 
 def list_laz_grids() -> list[str]:
@@ -70,9 +68,9 @@ def get_grid_path(grid_name: str) -> Path:
 
 
 def infer_source_srs(grid_name: str) -> str:
-    match = GRID_PREFIX_PATTERN.match(grid_name.upper())
-    if match:
-        return GRID_NUMBER_SRS[match.group(1)]
+    srs = infer_srs_from_name(grid_name)
+    if srs:
+        return srs
     raise HTTPException(
         status_code=400,
         detail=f"Não foi possível inferir a projeção de origem para o grid: {grid_name}",
@@ -201,6 +199,7 @@ def list_jobs() -> JSONResponse:
             "source_srs": job.source_srs,
             "target_srs": job.target_srs,
             "has_error_log": bool(job.error_log),
+            "kind": job.kind,
         }
         for job in store.list_jobs()
     ]
@@ -227,6 +226,7 @@ def get_job(job_id: str) -> JSONResponse:
             "target_srs": job.target_srs,
             "error_log": job.error_log,
             "download_url": f"/api/jobs/{job.id}/download" if job.status == "completed" else None,
+            "kind": job.kind,
         }
     )
 
@@ -245,6 +245,142 @@ def download_result(job_id: str) -> FileResponse:
         path=output_path,
         media_type="image/tiff",
         filename=output_path.name,
+    )
+
+
+def _bacia_response(info: bacias.BaciaInfo) -> dict:
+    tile_names = bacias.resolve_tile_names(info.geometry)
+    return {
+        "uc": info.uc,
+        "upst_area": info.upst_area,
+        "tile_count": len(tile_names),
+    }
+
+
+@app.get("/api/bacias/geojson")
+def bacias_geojson() -> Response:
+    return Response(content=bacias.get_bacias_geojson(), media_type="application/json")
+
+
+@app.get("/api/bacias/by-uc/{uc}")
+def bacia_by_uc(uc: int) -> JSONResponse:
+    info = bacias.get_bacia_by_uc(uc)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Bacia não encontrada para o código UC {uc}.")
+    return JSONResponse(_bacia_response(info))
+
+
+@app.get("/api/bacias/by-point")
+def bacia_by_point(lat: float, lon: float) -> JSONResponse:
+    info = bacias.get_bacia_by_point(lat, lon)
+    if info is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Nenhuma bacia hidrográfica encontrada para essa coordenada.",
+        )
+    return JSONResponse(_bacia_response(info))
+
+
+def _find_existing_mdt_bacia(filename: str) -> Optional[Path]:
+    server_path = MDT_BACIA_DIR / filename
+    if server_path.is_file():
+        return server_path
+    output_path = OUTPUT_DIR / filename
+    if output_path.is_file():
+        return output_path
+    return None
+
+
+@app.get("/api/mdt-bacia/check")
+def check_mdt_bacia(uc: int, resolution: float = 1.0) -> JSONResponse:
+    filename = mdt_bacia.mdt_bacia_filename(uc, resolution)
+    existing_path = _find_existing_mdt_bacia(filename)
+    if existing_path is None:
+        return JSONResponse({"exists": False})
+    return JSONResponse({"exists": True, "filename": filename, "path": str(existing_path)})
+
+
+@app.post("/api/mdt-bacia/jobs")
+def create_mdt_bacia_job(
+    uc: Annotated[int, Form()],
+    resolution: Annotated[float, Form()] = 1.0,
+    save_to_server: Annotated[bool, Form()] = False,
+    approve_overwrite: Annotated[bool, Form()] = False,
+) -> JSONResponse:
+    if not (0.1 <= resolution <= 100):
+        raise HTTPException(status_code=400, detail="Resolução espacial deve estar entre 0.1 e 100 metros.")
+
+    info = bacias.get_bacia_by_uc(uc)
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Bacia não encontrada para o código UC {uc}.")
+
+    tile_names = bacias.resolve_tile_names(info.geometry)
+    if not tile_names:
+        raise HTTPException(status_code=400, detail="Nenhum tile de articulação intersecta essa bacia.")
+
+    tile_files, missing_tiles = mdt_bacia.resolve_tile_files(tile_names, MDT_DIR)
+    if not tile_files:
+        raise HTTPException(
+            status_code=400,
+            detail="Nenhum tile MDT foi encontrado no servidor para os tiles dessa bacia.",
+        )
+
+    target_srs = mdt_bacia.pick_target_srs(tile_files)
+    filename = mdt_bacia.mdt_bacia_filename(uc, resolution)
+    output_path = OUTPUT_DIR / filename
+
+    existing_path = _find_existing_mdt_bacia(filename)
+    if existing_path is not None and not approve_overwrite:
+        return JSONResponse(
+            {
+                "detail": "Já existe um arquivo MDT_BACIA para essa bacia e resolução.",
+                "reprocess_required": True,
+                "filename": filename,
+                "path": str(existing_path),
+            },
+            status_code=409,
+        )
+
+    job_id = str(uuid.uuid4())
+    now = datetime.now(tz=timezone.utc).isoformat()
+    store.create_job(
+        JobRecord(
+            id=job_id,
+            original_filename=filename,
+            input_path=str(MDT_DIR),
+            output_path=str(output_path),
+            status="queued",
+            progress=0,
+            message=f"Job de merge criado ({len(tile_files)} tile(s), {len(missing_tiles)} ausente(s)).",
+            created_at=now,
+            updated_at=now,
+            source_srs=target_srs,
+            target_srs=target_srs,
+            kind="mdt_bacia",
+            extra={
+                "uc": uc,
+                "resolution": resolution,
+                "tile_files": [str(p) for p in tile_files],
+                "missing_tiles": missing_tiles,
+                "target_srs": target_srs,
+                "save_to_server": save_to_server,
+            },
+        )
+    )
+    worker.enqueue(job_id)
+
+    return JSONResponse(
+        {
+            "id": job_id,
+            "filename": filename,
+            "status": "queued",
+            "progress": 0,
+            "message": "Merge da bacia agendado para execução.",
+            "kind": "mdt_bacia",
+            "tile_count": len(tile_files),
+            "missing_tiles": missing_tiles,
+        },
+        status_code=202,
     )
 
 

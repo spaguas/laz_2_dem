@@ -5,10 +5,14 @@ __pycache__/
 app/uploads/*
 app/outputs/*
 app/nuvens/*
+app/mdt_tiles/*
+app/mdt_bacia/*
 app/data/jobs.json
 !app/uploads/.gitkeep
 !app/outputs/.gitkeep
 !app/nuvens/.gitkeep
+!app/mdt_tiles/.gitkeep
+!app/mdt_bacia/.gitkeep
 !app/data/.gitkeep
 app_outputs
 app_data

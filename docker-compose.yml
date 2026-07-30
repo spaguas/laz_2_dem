@@ -7,6 +7,8 @@ services:
       - ./app_data:/app/app/data
       - ./app_outputs:/app/app/outputs
       - ${NUVENS_HOST_PATH:-./app/nuvens}:/app/app/nuvens
+      - ${MDT_HOST_PATH:-./app/mdt_tiles}:/app/app/mdt_tiles
+      - ${MDT_BACIA_HOST_PATH:-./app/mdt_bacia}:/app/app/mdt_bacia
     ports:
       - "9091:9090"
     environment:
