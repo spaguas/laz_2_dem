@@ -9,7 +9,7 @@ import geopandas as gpd
 from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 
-GPKG_DIR = Path(__file__).resolve().parent / "data" / "gpkg"
+GPKG_DIR = Path(__file__).resolve().parent / "gpkg"
 BACIAS_PATH = GPKG_DIR / "Subbacias_Q5_SP.gpkg"
 TILES_PATH = GPKG_DIR / "articulacao_lidar.gpkg"
 

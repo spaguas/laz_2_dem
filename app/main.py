@@ -24,7 +24,6 @@ OUTPUT_DIR = BASE_DIR / "app" / "outputs"
 DATA_DIR = BASE_DIR / "app" / "data"
 MDT_DIR = Path(os.environ.get("MDT_HOST_PATH") or (BASE_DIR / "app" / "mdt_tiles"))
 MDT_BACIA_DIR = Path(os.environ.get("MDT_BACIA_HOST_PATH") or (BASE_DIR / "app" / "mdt_bacia"))
-GPKG_DIR = BASE_DIR / "app" / "data" / "gpkg"
 
 for directory in (NUVENS_DIR, OUTPUT_DIR, DATA_DIR, MDT_DIR, MDT_BACIA_DIR):
     directory.mkdir(parents=True, exist_ok=True)
