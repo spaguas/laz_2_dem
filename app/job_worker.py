@@ -118,6 +118,7 @@ class JobWorker:
         target_srs = extra.get("target_srs") or job.target_srs
         resolution = extra.get("resolution", 1)
         save_to_server = extra.get("save_to_server", False)
+        merge_mode = extra.get("merge_mode", "fast")
 
         self.store.update_job(
             job_id,
@@ -128,6 +129,15 @@ class JobWorker:
                 + (f" Ausentes no servidor: {', '.join(missing_tiles)}." if missing_tiles else "")
             ),
         )
+
+        def on_blend_progress(done: int, total: int) -> None:
+            pct = 15 + int((done / total) * 70) if total else 15
+            self.store.update_job(
+                job_id,
+                status="processing",
+                progress=pct,
+                message=f"Mesclando tiles com transição suave ({done}/{total})",
+            )
 
         try:
             self.store.update_job(
@@ -141,6 +151,8 @@ class JobWorker:
                 output_path=output_path,
                 target_srs=target_srs,
                 resolution=resolution,
+                mode=merge_mode,
+                on_progress=on_blend_progress if merge_mode == "blend" else None,
             )
 
             if save_to_server and self.mdt_bacia_dir is not None:

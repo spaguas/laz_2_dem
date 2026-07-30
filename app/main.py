@@ -304,9 +304,13 @@ def create_mdt_bacia_job(
     resolution: Annotated[float, Form()] = 1.0,
     save_to_server: Annotated[bool, Form()] = False,
     approve_overwrite: Annotated[bool, Form()] = False,
+    merge_mode: Annotated[str, Form()] = "fast",
 ) -> JSONResponse:
     if not (0.1 <= resolution <= 100):
         raise HTTPException(status_code=400, detail="Resolução espacial deve estar entre 0.1 e 100 metros.")
+
+    if merge_mode not in ("fast", "blend"):
+        raise HTTPException(status_code=400, detail="merge_mode deve ser 'fast' ou 'blend'.")
 
     info = bacias.get_bacia_by_uc(uc)
     if info is None:
@@ -365,6 +369,7 @@ def create_mdt_bacia_job(
                 "missing_tiles": missing_tiles,
                 "target_srs": target_srs,
                 "save_to_server": save_to_server,
+                "merge_mode": merge_mode,
             },
         )
     )

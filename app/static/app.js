@@ -46,6 +46,7 @@ const baciaScheduleButton = document.getElementById("baciaScheduleButton");
 const mdtBaciaDialog = document.getElementById("mdtBaciaDialog");
 const mdtBaciaUcLabel = document.getElementById("mdtBaciaUcLabel");
 const mdtBaciaResolution = document.getElementById("mdtBaciaResolution");
+const mdtBaciaMergeMode = document.getElementById("mdtBaciaMergeMode");
 const mdtBaciaSaveToServer = document.getElementById("mdtBaciaSaveToServer");
 const mdtBaciaExistingWarning = document.getElementById("mdtBaciaExistingWarning");
 const mdtBaciaExistingPath = document.getElementById("mdtBaciaExistingPath");
@@ -583,6 +584,7 @@ mdtBaciaResolution.addEventListener("input", debouncedRefreshExistingWarning);
 function openMdtBaciaDialog(uc) {
   mdtBaciaUcLabel.textContent = uc;
   mdtBaciaResolution.value = "1";
+  mdtBaciaMergeMode.value = "fast";
   mdtBaciaSaveToServer.checked = false;
   mdtBaciaExistingWarning.classList.add("hidden");
   confirmMdtBaciaButton.textContent = "Agendar merge";
@@ -604,12 +606,14 @@ cancelMdtBaciaButton.addEventListener("click", () => {
 async function submitMdtBaciaJob() {
   const uc = selectedBaciaUc;
   const resolution = parseFloat(mdtBaciaResolution.value) || 1;
+  const mergeMode = mdtBaciaMergeMode.value;
   const saveToServer = mdtBaciaSaveToServer.checked;
   const approveOverwrite = mdtBaciaFileExists;
 
   const formData = new FormData();
   formData.set("uc", uc);
   formData.set("resolution", resolution);
+  formData.set("merge_mode", mergeMode);
   formData.set("save_to_server", saveToServer ? "true" : "false");
   formData.set("approve_overwrite", approveOverwrite ? "true" : "false");
 
