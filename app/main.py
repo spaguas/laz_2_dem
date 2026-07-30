@@ -249,7 +249,7 @@ def download_result(job_id: str) -> FileResponse:
 
 
 def _bacia_response(info: bacias.BaciaInfo) -> dict:
-    tile_names = bacias.resolve_tile_names(info.geometry)
+    tile_names = bacias.resolve_tile_names_for_uc(info.uc)
     found, missing = mdt_bacia.resolve_tile_files(tile_names, MDT_DIR)
     return {
         "uc": info.uc,
@@ -312,9 +312,12 @@ def create_mdt_bacia_job(
     if info is None:
         raise HTTPException(status_code=404, detail=f"Bacia não encontrada para o código UC {uc}.")
 
-    tile_names = bacias.resolve_tile_names(info.geometry)
+    tile_names = bacias.resolve_tile_names_for_uc(info.uc)
     if not tile_names:
-        raise HTTPException(status_code=400, detail="Nenhum tile de articulação intersecta essa bacia.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Nenhuma lista de tiles encontrada para a bacia UC {uc} (folhas_{uc}.csv ausente).",
+        )
 
     tile_files, missing_tiles = mdt_bacia.resolve_tile_files(tile_names, MDT_DIR)
     if not tile_files:

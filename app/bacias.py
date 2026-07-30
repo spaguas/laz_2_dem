@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
+from functools import lru_cache
 from typing import Optional
 
 import geopandas as gpd
@@ -11,7 +12,7 @@ from shapely.geometry.base import BaseGeometry
 
 GPKG_DIR = Path(__file__).resolve().parent / "gpkg"
 BACIAS_PATH = GPKG_DIR / "Subbacias_Q5_SP.gpkg"
-TILES_PATH = GPKG_DIR / "articulacao_lidar.gpkg"
+FOLHAS_DIR = Path(__file__).resolve().parent / "folhas_por_bacia"
 
 WGS84 = "EPSG:4326"
 
@@ -23,16 +24,6 @@ class BaciaInfo:
     geometry: BaseGeometry
 
 
-def _resolve_tile_name(row) -> Optional[str]:
-    nomenc_2k = row.get("Nomenc_2k")
-    if isinstance(nomenc_2k, str) and nomenc_2k.strip():
-        return nomenc_2k.strip()
-    nomenc_5k = row.get("Nomenc_5k")
-    if isinstance(nomenc_5k, str) and nomenc_5k.strip():
-        return nomenc_5k.strip()
-    return None
-
-
 def _ensure_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     if gdf.crs is None or gdf.crs.to_string() != WGS84:
         gdf = gdf.to_crs(WGS84)
@@ -42,13 +33,6 @@ def _ensure_wgs84(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 @lru_cache(maxsize=1)
 def load_bacias() -> gpd.GeoDataFrame:
     return _ensure_wgs84(gpd.read_file(BACIAS_PATH))
-
-
-@lru_cache(maxsize=1)
-def load_tiles() -> gpd.GeoDataFrame:
-    gdf = _ensure_wgs84(gpd.read_file(TILES_PATH))
-    gdf["tile_name"] = gdf.apply(_resolve_tile_name, axis=1)
-    return gdf
 
 
 def _row_to_bacia_info(row) -> BaciaInfo:
@@ -83,12 +67,18 @@ def get_bacia_by_point(lat: float, lon: float) -> Optional[BaciaInfo]:
     return _row_to_bacia_info(matches.iloc[0])
 
 
-def resolve_tile_names(geometry: BaseGeometry) -> list[str]:
-    gdf = load_tiles()
-    candidate_idx = list(gdf.sindex.query(geometry, predicate="intersects"))
-    if not candidate_idx:
+def resolve_tile_names_for_uc(uc: int) -> list[str]:
+    csv_path = FOLHAS_DIR / f"folhas_{uc}.csv"
+    if not csv_path.is_file():
         return []
-    candidates = gdf.iloc[candidate_idx]
-    matches = candidates[candidates.geometry.intersects(geometry)]
-    names = [name for name in matches["tile_name"].tolist() if name]
+
+    names: list[str] = []
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+        for row in csv.reader(f):
+            if not row:
+                continue
+            value = row[0].strip()
+            if not value or value.lower() == "folha":
+                continue
+            names.append(value)
     return sorted(set(names))
