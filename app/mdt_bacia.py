@@ -14,6 +14,7 @@ from .grid_srs import infer_srs_from_name
 
 DEFAULT_TARGET_SRS = "EPSG:31982"
 TILE_EXTENSIONS = (".tif", ".tiff")
+SOURCE_NODATA = 0
 MERGE_NODATA = -32768
 CBLEND_PIXELS = 20
 TILE_TIMEOUT_SECONDS = 300
@@ -147,6 +148,7 @@ def _merge_fast(
         "-t_srs", target_srs,
         "-tr", str(resolution), str(resolution),
         "-r", "bilinear",
+        "-srcnodata", str(SOURCE_NODATA),
         "-dstnodata", str(MERGE_NODATA),
         *GTIFF_CREATION_OPTIONS,
         *[str(path) for path in tile_paths],
@@ -200,6 +202,7 @@ def _merge_blend(
                 ]
             cmd += [
                 "-r", "bilinear",
+                "-srcnodata", str(SOURCE_NODATA),
                 "-cutline", str(cutline_path),
                 "-cutline_srs", native_srs,
                 "-cblend", str(CBLEND_PIXELS),
