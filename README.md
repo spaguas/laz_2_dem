@@ -40,10 +40,19 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 9090
 
 ## MDT por bacia hidrográfica
 
-Aba "MDT por bacia": o usuário seleciona uma bacia por coordenadas, código UC ou clicando no
-mapa; o app resolve os tiles MDT (`.tif`) que intersectam a bacia (via `app/data/gpkg/`) e agenda
-um merge assíncrono (`gdalwarp`) com a resolução espacial escolhida, gerando
-`MDT_BACIA_{UC}_{resolução}m.tif`.
+Aba "MDT por bacia": o usuário seleciona uma bacia por coordenadas ou código UC; o app resolve os
+tiles MDT (`.tif`) da bacia a partir das listas em `app/folhas_por_bacia/folhas_{uc}.csv` e agenda
+um merge assíncrono com a resolução espacial escolhida, gerando `MDT_BACIA_{UC}_{resolução}m.tif`.
+A bacia em si (geometria/área) vem de `app/gpkg/Subbacias_Q5_SP.gpkg`.
+
+Modos de mesclagem (`gdalwarp`):
+- **Rápido**: uma chamada só combinando todos os tiles. Pode deixar bordas visíveis entre tiles.
+- **Suave**: um `gdalwarp` por tile, com `-cutline`/`-cblend`, pra suavizar a transição entre
+  tiles vizinhos. Bem mais lento em bacias com muitos tiles.
+
+Depois do merge, o app preenche por interpolação (`rasterio.fill.fillnodata`) os buracos de
+NoData internos à bacia (falhas no meio do terreno, não a borda) e recorta o resultado final pelo
+contorno exato da bacia — fora da bacia permanece NoData.
 
 Variáveis de ambiente novas (mesmo padrão de `NUVENS_HOST_PATH`):
 - `MDT_HOST_PATH`: pasta com os tiles MDT de origem (produção: `/home/sf-maps/MDT`).

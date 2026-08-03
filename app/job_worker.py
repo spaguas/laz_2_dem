@@ -7,7 +7,7 @@ import traceback
 from pathlib import Path
 from typing import Optional
 
-from . import mdt_bacia
+from . import bacias, mdt_bacia
 from .laz2dem import process_laz_to_dem
 from .job_store import JobRecord, JobStore
 
@@ -154,6 +154,16 @@ class JobWorker:
                 mode=merge_mode,
                 on_progress=on_blend_progress if merge_mode == "blend" else None,
             )
+
+            self.store.update_job(
+                job_id,
+                status="processing",
+                progress=88,
+                message="Preenchendo falhas internas de dados e recortando pela bacia",
+            )
+            bacia_info = bacias.get_bacia_by_uc(extra.get("uc"))
+            if bacia_info is not None:
+                mdt_bacia.fill_and_clip_to_bacia(output_path, bacia_info.geometry, target_srs)
 
             if save_to_server and self.mdt_bacia_dir is not None:
                 self.store.update_job(

@@ -8,7 +8,13 @@ import time
 from pathlib import Path
 from typing import Callable, Iterable, Literal, Optional
 
+import geopandas as gpd
+import rasterio
 from pyproj import Transformer
+from rasterio.features import geometry_mask
+from rasterio.fill import fillnodata
+from rasterio.mask import mask as rio_mask
+from shapely.geometry.base import BaseGeometry
 
 from .grid_srs import infer_srs_from_name
 
@@ -20,6 +26,7 @@ CBLEND_PIXELS = 20
 TILE_TIMEOUT_SECONDS = 300
 FAST_MERGE_TIMEOUT_SECONDS = 3600
 GTIFF_CREATION_OPTIONS = ["-co", "COMPRESS=LZW", "-co", "TILED=YES", "-co", "BLOCKXSIZE=256", "-co", "BLOCKYSIZE=256"]
+FILL_MAX_SEARCH_DISTANCE = 100
 
 MergeMode = Literal["fast", "blend"]
 ProgressCallback = Callable[[int, int], None]
@@ -239,3 +246,60 @@ def merge_tiles(
         raise RuntimeError("Saida .tif nao foi criada apos a execucao do gdalwarp.")
 
     return elapsed
+
+
+def fill_and_clip_to_bacia(
+    merged_path: Path,
+    bacia_geometry: BaseGeometry,
+    target_srs: str,
+) -> None:
+    """Preenche por interpolação os buracos de NoData internos à bacia (não mexe
+    no NoData fora dela) e recorta o raster final pelo contorno da bacia."""
+    bacia_gdf = gpd.GeoDataFrame(geometry=[bacia_geometry], crs="EPSG:4326").to_crs(target_srs)
+    geoms = [bacia_gdf.geometry.iloc[0].__geo_interface__]
+
+    with rasterio.open(merged_path) as src:
+        data = src.read(1)
+        profile = src.profile
+        transform = src.transform
+        nodata = src.nodata if src.nodata is not None else MERGE_NODATA
+
+    # True fora da bacia
+    mask_fora = geometry_mask(geoms, out_shape=data.shape, transform=transform, invert=False)
+    nodata_original = data == nodata
+    # "válido" para o fillnodata = já tem dado, ou é nodata fora da bacia (não deve
+    # ser preenchido) -> assim só propaga para os nodata de DENTRO da bacia.
+    valido_para_fill = (~nodata_original) | (mask_fora & nodata_original)
+
+    preenchido = fillnodata(
+        data.astype("float32"),
+        mask=valido_para_fill.astype("uint8"),
+        max_search_distance=FILL_MAX_SEARCH_DISTANCE,
+        smoothing_iterations=0,
+    )
+    preenchido[mask_fora & nodata_original] = nodata
+
+    filled_path = merged_path.parent / f"{merged_path.stem}_filled.tif"
+    clipped_path = merged_path.parent / f"{merged_path.stem}_clipped.tif"
+    try:
+        profile.update(dtype="float32", nodata=nodata)
+        with rasterio.open(filled_path, "w", **profile) as dst:
+            dst.write(preenchido, 1)
+
+        with rasterio.open(filled_path) as src:
+            out_image, out_transform = rio_mask(src, geoms, crop=True, nodata=nodata)
+            out_meta = src.meta.copy()
+        out_meta.update({
+            "height": out_image.shape[1],
+            "width": out_image.shape[2],
+            "transform": out_transform,
+            "nodata": nodata,
+            "dtype": "float32",
+        })
+        with rasterio.open(clipped_path, "w", **out_meta) as dst:
+            dst.write(out_image)
+
+        clipped_path.replace(merged_path)
+    finally:
+        filled_path.unlink(missing_ok=True)
+        clipped_path.unlink(missing_ok=True)
