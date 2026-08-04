@@ -150,18 +150,61 @@ def _merge_fast(
     resolution: float,
 ) -> None:
     gdalwarp_bin = _find_bin("gdalwarp")
-    cmd = [
-        gdalwarp_bin,
-        "-t_srs", target_srs,
-        "-tr", str(resolution), str(resolution),
-        "-r", "bilinear",
-        "-srcnodata", str(SOURCE_NODATA),
-        "-dstnodata", str(MERGE_NODATA),
-        *GTIFF_CREATION_OPTIONS,
-        *[str(path) for path in tile_paths],
-        str(output_path),
-    ]
-    _run(cmd, timeout=FAST_MERGE_TIMEOUT_SECONDS)
+    gdalbuildvrt_bin = _find_bin("gdalbuildvrt")
+
+    # gdalwarp com centenas/milhares de arquivos na linha de comando abre todas as
+    # fontes de uma vez e as mantém abertas durante todo o warp, o que esgota o
+    # limite de file descriptors do SO em bacias com muitos tiles ("Too many open
+    # files"). Para evitar isso, cada tile é reprojetado individualmente para um
+    # VRT leve (não processa pixels, só metadados), os VRTs são combinados num
+    # mosaico virtual único com gdalbuildvrt (que abre as fontes sequencialmente,
+    # não todas ao mesmo tempo) e só então um gdalwarp final materializa o GeoTIFF
+    # a partir desse mosaico: o driver VRT usa um pool de datasets abertos com
+    # tamanho limitado, então o número de descritores abertos simultaneamente não
+    # cresce com a quantidade de tiles.
+    with tempfile.TemporaryDirectory(prefix="mdt_bacia_fast_") as tmp_dir_str:
+        tmp_dir = Path(tmp_dir_str)
+        warped_vrt_paths = []
+        for i, tile in enumerate(tile_paths):
+            vrt_path = tmp_dir / f"tile_{i}.vrt"
+            _run(
+                [
+                    gdalwarp_bin,
+                    "-t_srs", target_srs,
+                    "-tr", str(resolution), str(resolution),
+                    "-r", "bilinear",
+                    "-srcnodata", str(SOURCE_NODATA),
+                    "-dstnodata", str(MERGE_NODATA),
+                    "-of", "VRT",
+                    str(tile),
+                    str(vrt_path),
+                ],
+                timeout=TILE_TIMEOUT_SECONDS,
+            )
+            warped_vrt_paths.append(vrt_path)
+
+        file_list_path = tmp_dir / "tiles.txt"
+        file_list_path.write_text(
+            "\n".join(str(path) for path in warped_vrt_paths), encoding="utf-8"
+        )
+
+        mosaic_vrt_path = tmp_dir / "mosaic.vrt"
+        _run(
+            [gdalbuildvrt_bin, "-input_file_list", str(file_list_path), str(mosaic_vrt_path)],
+            timeout=FAST_MERGE_TIMEOUT_SECONDS,
+        )
+
+        _run(
+            [
+                gdalwarp_bin,
+                "-srcnodata", str(MERGE_NODATA),
+                "-dstnodata", str(MERGE_NODATA),
+                *GTIFF_CREATION_OPTIONS,
+                str(mosaic_vrt_path),
+                str(output_path),
+            ],
+            timeout=FAST_MERGE_TIMEOUT_SECONDS,
+        )
 
 
 def _merge_blend(
