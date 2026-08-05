@@ -27,6 +27,13 @@ TILE_TIMEOUT_SECONDS = 300
 FAST_MERGE_TIMEOUT_SECONDS = 3600
 GTIFF_CREATION_OPTIONS = ["-co", "COMPRESS=LZW", "-co", "TILED=YES", "-co", "BLOCKXSIZE=256", "-co", "BLOCKYSIZE=256"]
 FILL_MAX_SEARCH_DISTANCE = 100
+# Descritores de arquivo reservados para stdio, pipes do subprocess, libs
+# compartilhadas etc. -- não contam só os tiles, sobra dos handles do próprio
+# gdalwarp/GDAL importa também.
+RESERVED_FDS = 100
+# Teto de tiles por lote mesmo que o limite do SO seja muito alto -- evita
+# recriar o mesmo risco com um "lote" gigante e mantém cada lote leve.
+MAX_BATCH_SIZE = 500
 
 MergeMode = Literal["fast", "blend"]
 ProgressCallback = Callable[[int, int], None]
@@ -71,6 +78,21 @@ def pick_target_srs(tile_paths: list[Path]) -> str:
     if not counts:
         return DEFAULT_TARGET_SRS
     return max(counts.items(), key=lambda item: (item[1], item[0] == DEFAULT_TARGET_SRS))[0]
+
+
+def _get_open_files_limit() -> int:
+    try:
+        import resource  # POSIX only (não existe no Windows)
+
+        soft_limit, _hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+        return soft_limit
+    except (ImportError, ValueError, OSError):
+        return 256
+
+
+def _compute_batch_size() -> int:
+    limit = _get_open_files_limit()
+    return max(10, min(limit - RESERVED_FDS, MAX_BATCH_SIZE))
 
 
 def _find_bin(name: str) -> str:
@@ -148,63 +170,55 @@ def _merge_fast(
     output_path: Path,
     target_srs: str,
     resolution: float,
+    on_progress: Optional[ProgressCallback] = None,
 ) -> None:
     gdalwarp_bin = _find_bin("gdalwarp")
-    gdalbuildvrt_bin = _find_bin("gdalbuildvrt")
 
-    # gdalwarp com centenas/milhares de arquivos na linha de comando abre todas as
-    # fontes de uma vez e as mantém abertas durante todo o warp, o que esgota o
-    # limite de file descriptors do SO em bacias com muitos tiles ("Too many open
-    # files"). Para evitar isso, cada tile é reprojetado individualmente para um
-    # VRT leve (não processa pixels, só metadados), os VRTs são combinados num
-    # mosaico virtual único com gdalbuildvrt (que abre as fontes sequencialmente,
-    # não todas ao mesmo tempo) e só então um gdalwarp final materializa o GeoTIFF
-    # a partir desse mosaico: o driver VRT usa um pool de datasets abertos com
-    # tamanho limitado, então o número de descritores abertos simultaneamente não
-    # cresce com a quantidade de tiles.
-    with tempfile.TemporaryDirectory(prefix="mdt_bacia_fast_") as tmp_dir_str:
+    def _warp(sources: list[Path], destination: Path) -> None:
+        cmd = [
+            gdalwarp_bin,
+            "-t_srs", target_srs,
+            "-tr", str(resolution), str(resolution),
+            "-r", "bilinear",
+            "-srcnodata", str(SOURCE_NODATA),
+            "-dstnodata", str(MERGE_NODATA),
+            *GTIFF_CREATION_OPTIONS,
+            *[str(path) for path in sources],
+            str(destination),
+        ]
+        _run(cmd, timeout=FAST_MERGE_TIMEOUT_SECONDS)
+
+    # gdalwarp com muitos arquivos na linha de comando abre todos de uma vez e os
+    # mantém abertos durante todo o warp, o que esgota o limite de file
+    # descriptors do container ("Too many open files") em bacias com muitos
+    # tiles. batch_size é sempre menor que o limite real do SO (detectado em
+    # runtime via RLIMIT_NOFILE), então cada gdalwarp individual nunca chega
+    # perto do limite.
+    batch_size = _compute_batch_size()
+    batches = [tile_paths[i : i + batch_size] for i in range(0, len(tile_paths), batch_size)]
+
+    if len(batches) == 1:
+        _warp(batches[0], output_path)
+        if on_progress:
+            on_progress(1, 1)
+        return
+
+    with tempfile.TemporaryDirectory(prefix="mdt_bacia_fast_batches_") as tmp_dir_str:
         tmp_dir = Path(tmp_dir_str)
-        warped_vrt_paths = []
-        for i, tile in enumerate(tile_paths):
-            vrt_path = tmp_dir / f"tile_{i}.vrt"
-            _run(
-                [
-                    gdalwarp_bin,
-                    "-t_srs", target_srs,
-                    "-tr", str(resolution), str(resolution),
-                    "-r", "bilinear",
-                    "-srcnodata", str(SOURCE_NODATA),
-                    "-dstnodata", str(MERGE_NODATA),
-                    "-of", "VRT",
-                    str(tile),
-                    str(vrt_path),
-                ],
-                timeout=TILE_TIMEOUT_SECONDS,
-            )
-            warped_vrt_paths.append(vrt_path)
+        batch_outputs = []
+        for i, batch in enumerate(batches):
+            batch_output = tmp_dir / f"batch_{i}.tif"
+            _warp(batch, batch_output)
+            batch_outputs.append(batch_output)
+            if on_progress:
+                on_progress(i + 1, len(batches) + 1)
 
-        file_list_path = tmp_dir / "tiles.txt"
-        file_list_path.write_text(
-            "\n".join(str(path) for path in warped_vrt_paths), encoding="utf-8"
-        )
-
-        mosaic_vrt_path = tmp_dir / "mosaic.vrt"
-        _run(
-            [gdalbuildvrt_bin, "-input_file_list", str(file_list_path), str(mosaic_vrt_path)],
-            timeout=FAST_MERGE_TIMEOUT_SECONDS,
-        )
-
-        _run(
-            [
-                gdalwarp_bin,
-                "-srcnodata", str(MERGE_NODATA),
-                "-dstnodata", str(MERGE_NODATA),
-                *GTIFF_CREATION_OPTIONS,
-                str(mosaic_vrt_path),
-                str(output_path),
-            ],
-            timeout=FAST_MERGE_TIMEOUT_SECONDS,
-        )
+        # Etapa final: combina os poucos GeoTIFFs intermediários (um por lote,
+        # já reprojetados/no mesmo grid) num único gdalwarp -- sempre abre bem
+        # menos arquivos que o limite do SO, então nunca precisa de lote aqui.
+        _warp(batch_outputs, output_path)
+        if on_progress:
+            on_progress(len(batches) + 1, len(batches) + 1)
 
 
 def _merge_blend(
@@ -282,7 +296,7 @@ def merge_tiles(
     if mode == "blend":
         _merge_blend(tile_paths, output_path, target_srs, resolution, on_progress=on_progress)
     else:
-        _merge_fast(tile_paths, output_path, target_srs, resolution)
+        _merge_fast(tile_paths, output_path, target_srs, resolution, on_progress=on_progress)
     elapsed = time.time() - started_at
 
     if not output_path.exists():

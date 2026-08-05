@@ -130,14 +130,14 @@ class JobWorker:
             ),
         )
 
-        def on_blend_progress(done: int, total: int) -> None:
+        def on_merge_progress(done: int, total: int) -> None:
             pct = 15 + int((done / total) * 70) if total else 15
-            self.store.update_job(
-                job_id,
-                status="processing",
-                progress=pct,
-                message=f"Mesclando tiles com transição suave ({done}/{total})",
+            label = (
+                f"Mesclando tiles com transição suave ({done}/{total})"
+                if merge_mode == "blend"
+                else f"Mesclando lote {done}/{total}"
             )
+            self.store.update_job(job_id, status="processing", progress=pct, message=label)
 
         try:
             self.store.update_job(
@@ -152,7 +152,7 @@ class JobWorker:
                 target_srs=target_srs,
                 resolution=resolution,
                 mode=merge_mode,
-                on_progress=on_blend_progress if merge_mode == "blend" else None,
+                on_progress=on_merge_progress,
             )
 
             self.store.update_job(
