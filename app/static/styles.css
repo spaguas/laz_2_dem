@@ -242,6 +242,7 @@ button:disabled {
 
 .download-link {
   display: inline-block;
+  margin-right: 1rem;
   color: #d8fff0;
   text-decoration: none;
   border-bottom: 1px solid rgba(216, 255, 240, 0.35);

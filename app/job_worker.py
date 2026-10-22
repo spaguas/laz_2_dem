@@ -7,9 +7,13 @@ import traceback
 from pathlib import Path
 from typing import Optional
 
-from . import bacias, mdt_bacia
+import geopandas as gpd
+from pyproj import Transformer
+
+from . import bacia_vetor, bacias, mdt_pipeline
 from .laz2dem import process_laz_to_dem
 from .job_store import JobRecord, JobStore
+from .mdt_pipeline import MdtReport, MdtValidationError, log_path_for
 
 
 class JobWorker:
@@ -62,6 +66,7 @@ class JobWorker:
             )
             return
 
+        report = MdtReport(titulo=f"MDT da folha {input_path.name}")
         try:
             self.store.update_job(
                 job_id,
@@ -79,26 +84,34 @@ class JobWorker:
                 job_id,
                 status="processing",
                 progress=60,
-                message=f"Gerando GeoTIFF no CRS inferido: {job.target_srs}",
+                message=f"Gerando GeoTIFF no CRS inferido: {job.target_srs} (com limpeza e validação padrão)",
             )
             process_laz_to_dem(
                 input_path=input_path,
                 output_path=output_path,
                 source_srs=job.source_srs,
                 target_srs=job.target_srs,
-            )
-            self.store.update_job(
-                job_id,
-                status="processing",
-                progress=90,
-                message="Finalizando geração do GeoTIFF",
+                report=report,
             )
 
+            message = "Processamento concluído e validado com sucesso."
+            if report.avisos:
+                message += " ATENÇÃO: " + " | ".join(report.avisos)
             self.store.update_job(
                 job_id,
                 status="completed",
                 progress=100,
-                message="Processamento concluído com sucesso.",
+                message=message,
+            )
+        except MdtValidationError as exc:
+            # MDT reprovado não fica disponível para download; o log explica o motivo.
+            output_path.unlink(missing_ok=True)
+            self.store.update_job(
+                job_id,
+                status="failed",
+                progress=100,
+                message=str(exc),
+                error_log=report.as_text(),
             )
         except Exception as exc:  # noqa: BLE001
             self.store.update_job(
@@ -106,8 +119,19 @@ class JobWorker:
                 status="failed",
                 progress=100,
                 message=f"Falha no processamento: {exc}",
-                error_log=traceback.format_exc(),
+                error_log=traceback.format_exc() + "\n" + report.as_text(),
             )
+        finally:
+            report.write(log_path_for(output_path))
+
+    def _load_bacia_geometry(self, extra: dict, epsg: int):
+        bacia_path = extra.get("bacia_path")
+        if bacia_path:
+            return bacia_vetor.carregar_geometria(Path(bacia_path), epsg)
+        info = bacias.get_bacia_by_uc(extra.get("uc"))
+        if info is None:
+            raise RuntimeError("Geometria da bacia não encontrada.")
+        return gpd.GeoSeries([info.geometry], crs="EPSG:4326").to_crs(epsg).iloc[0]
 
     def _process_mdt_bacia(self, job: JobRecord) -> None:
         job_id = job.id
@@ -115,69 +139,74 @@ class JobWorker:
         extra = job.extra or {}
         tile_files = [Path(p) for p in extra.get("tile_files", [])]
         missing_tiles = extra.get("missing_tiles", [])
-        target_srs = extra.get("target_srs") or job.target_srs
-        resolution = extra.get("resolution", 1)
+        resolution = float(extra.get("resolution", 1))
         save_to_server = extra.get("save_to_server", False)
         merge_mode = extra.get("merge_mode", "fast")
+        epsg = extra.get("epsg") or mdt_pipeline.epsg_from_srs(extra.get("target_srs") or job.target_srs)
+
+        report = MdtReport(titulo=f"MDT por bacia - {job.original_filename}")
+        report.set("job_id", job_id)
+        report.set("origem_bacia", extra.get("origem", "uc"))
+        for chave in ("uc", "nome_bacia", "arquivo_enviado", "crs_original", "reprojetada", "area_zona_km2"):
+            if chave in extra:
+                report.set(chave, extra[chave])
+        report.set("folhas_ausentes_no_servidor", missing_tiles)
+        report.set("modo_mosaico", merge_mode)
+
+        def on_progress(pct: int, msg: str) -> None:
+            self.store.update_job(job_id, status="processing", progress=pct, message=msg)
 
         self.store.update_job(
             job_id,
             status="processing",
-            progress=10,
+            progress=5,
             message=(
-                f"Resolvendo tiles da bacia ({len(tile_files)} encontrado(s))."
+                f"Preparando bacia ({len(tile_files)} folha(s) encontrada(s))."
                 + (f" Ausentes no servidor: {', '.join(missing_tiles)}." if missing_tiles else "")
             ),
         )
 
-        def on_merge_progress(done: int, total: int) -> None:
-            pct = 15 + int((done / total) * 70) if total else 15
-            label = (
-                f"Mesclando tiles com transição suave ({done}/{total})"
-                if merge_mode == "blend"
-                else f"Mesclando lote {done}/{total}"
-            )
-            self.store.update_job(job_id, status="processing", progress=pct, message=label)
-
         try:
-            self.store.update_job(
-                job_id,
-                status="processing",
-                progress=40,
-                message=f"Mesclando {len(tile_files)} tile(s) com gdalwarp (CRS destino: {target_srs})",
-            )
-            mdt_bacia.merge_tiles(
+            bacia_geom = self._load_bacia_geometry(extra, epsg)
+
+            barragem_xy = None
+            barragem = extra.get("barragem")  # [lon, lat] em WGS84
+            if barragem:
+                transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
+                barragem_xy = transformer.transform(barragem[0], barragem[1])
+                report.set("barragem_wgs84_lon_lat", barragem)
+            else:
+                report.log("Coordenada da barragem não informada; checagem do ponto não será feita.")
+
+            mdt_pipeline.gerar_mdt_bacia(
+                bacia_geom=bacia_geom,
+                epsg=epsg,
+                resolution=resolution,
                 tile_paths=tile_files,
                 output_path=output_path,
-                target_srs=target_srs,
-                resolution=resolution,
-                mode=merge_mode,
-                on_progress=on_merge_progress,
+                report=report,
+                modo=merge_mode,
+                barragem_xy=barragem_xy,
+                on_progress=on_progress,
             )
-
-            self.store.update_job(
-                job_id,
-                status="processing",
-                progress=88,
-                message="Preenchendo falhas internas de dados e recortando pela bacia",
-            )
-            bacia_info = bacias.get_bacia_by_uc(extra.get("uc"))
-            if bacia_info is not None:
-                mdt_bacia.fill_and_clip_to_bacia(output_path, bacia_info.geometry, target_srs)
 
             if save_to_server and self.mdt_bacia_dir is not None:
                 self.store.update_job(
                     job_id,
                     status="processing",
-                    progress=90,
+                    progress=98,
                     message="Copiando resultado para a pasta compartilhada do servidor",
                 )
                 self.mdt_bacia_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(output_path, self.mdt_bacia_dir / output_path.name)
+                report.log(f"Cópia gravada em {self.mdt_bacia_dir / output_path.name}.")
+                report.write(log_path_for(self.mdt_bacia_dir / output_path.name))
 
-            message = "Merge concluído com sucesso."
+            message = "MDT gerado e validado com sucesso."
             if missing_tiles:
                 message += f" Tiles ausentes no servidor (ignorados): {', '.join(missing_tiles)}."
+            if report.avisos:
+                message += " ATENÇÃO: " + " | ".join(report.avisos)
 
             self.store.update_job(
                 job_id,
@@ -185,11 +214,27 @@ class JobWorker:
                 progress=100,
                 message=message,
             )
+        except MdtValidationError as exc:
+            # MDT reprovado não fica disponível para download; a cópia
+            # CLIPPED_DEM_ORIGINAL.tif e o log ficam na pasta do processamento.
+            output_path.unlink(missing_ok=True)
+            message = str(exc)
+            if missing_tiles:
+                message += f" Tiles ausentes no servidor: {', '.join(missing_tiles)}."
+            self.store.update_job(
+                job_id,
+                status="failed",
+                progress=100,
+                message=message,
+                error_log=report.as_text(),
+            )
         except Exception as exc:  # noqa: BLE001
             self.store.update_job(
                 job_id,
                 status="failed",
                 progress=100,
-                message=f"Falha no merge: {exc}",
-                error_log=traceback.format_exc(),
+                message=f"Falha na geração do MDT: {exc}",
+                error_log=traceback.format_exc() + "\n" + report.as_text(),
             )
+        finally:
+            report.write(log_path_for(output_path))

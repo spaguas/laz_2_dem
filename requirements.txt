@@ -3,5 +3,9 @@ uvicorn[standard]
 jinja2
 python-multipart
 geopandas
+pyogrio
 pyproj
 rasterio
+numpy
+scipy
+shapely

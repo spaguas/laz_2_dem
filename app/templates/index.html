@@ -89,6 +89,7 @@
           <div class="method-tabs">
             <button type="button" id="methodCoord" class="tab-btn active" data-method="coord">Coordenadas</button>
             <button type="button" id="methodCode" class="tab-btn" data-method="code">Código UC</button>
+            <button type="button" id="methodVetor" class="tab-btn" data-method="vetor">Arquivo vetorial</button>
           </div>
 
           <div id="baciaMethodCoord" class="bacia-method">
@@ -109,6 +110,44 @@
             <label for="baciaUcInput">Código UC da bacia</label>
             <input type="number" id="baciaUcInput" placeholder="31770" />
             <button type="button" id="baciaLookupUcButton" class="secondary-button">Buscar bacia</button>
+          </div>
+
+          <div id="baciaMethodVetor" class="bacia-method hidden">
+            <label for="baciaVetorFiles">Bacia em shapefile, GeoPackage ou KML</label>
+            <p class="field-hint">
+              Shapefile: selecione juntos .shp, .shx, .dbf e .prj (ou um .zip com eles). Também aceita .gpkg, .kml
+              e .kmz. Se o CRS não for SIRGAS 2000 / UTM 22S ou 23S, a bacia é reprojetada para a zona que contém
+              a maior parte da área (22S a oeste de -48°, 23S a leste).
+            </p>
+            <input
+              type="file"
+              id="baciaVetorFiles"
+              class="csv-input"
+              multiple
+              accept=".zip,.shp,.shx,.dbf,.prj,.cpg,.gpkg,.kml,.kmz"
+            />
+            <div class="projection-grid">
+              <div>
+                <label for="baciaVetorBarragemLat">Latitude da barragem (opcional)</label>
+                <input type="number" id="baciaVetorBarragemLat" step="any" placeholder="-23.55" />
+              </div>
+              <div>
+                <label for="baciaVetorBarragemLon">Longitude da barragem (opcional)</label>
+                <input type="number" id="baciaVetorBarragemLon" step="any" placeholder="-46.63" />
+              </div>
+            </div>
+            <p class="field-hint">Se informada, a validação confere que a barragem cai sobre um pixel válido do MDT.</p>
+            <button type="button" id="baciaVetorUploadButton" class="secondary-button">Analisar bacia</button>
+
+            <div id="baciaVetorResult" class="bacia-result hidden">
+              <p id="baciaVetorResultText"></p>
+              <p id="baciaVetorCrsText" class="field-hint"></p>
+              <div id="baciaVetorMissingWarning" class="bacia-warning hidden">
+                <p>Folhas ausentes no servidor (não serão incluídas no MDT):</p>
+                <ul id="baciaVetorMissingList"></ul>
+              </div>
+              <button type="button" id="baciaVetorScheduleButton">Gerar MDT da bacia</button>
+            </div>
           </div>
 
           <p id="baciaLookupMessage" class="field-hint"></p>
@@ -197,6 +236,25 @@
           <div class="dialog-actions">
             <button id="cancelMdtBaciaButton" type="button" class="secondary-button">Cancelar</button>
             <button id="confirmMdtBaciaButton" type="button">Agendar merge</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="mdtVetorDialog" class="confirm-dialog">
+        <form method="dialog">
+          <h2>Gerar MDT da bacia enviada</h2>
+          <p>Bacia <strong id="mdtVetorNomeLabel"></strong> · <span id="mdtVetorCrsLabel"></span></p>
+          <div>
+            <label for="mdtVetorResolution">Resolução espacial (metros)</label>
+            <input type="number" id="mdtVetorResolution" min="0.1" max="100" step="0.1" value="5" />
+            <p class="field-hint">
+              Mosaico → recorte → limpeza → validação. Saída Float32, nodata -32768, DEFLATE, grade alinhada a
+              múltiplos do pixel. O arquivo fica disponível só para download.
+            </p>
+          </div>
+          <div class="dialog-actions">
+            <button id="cancelMdtVetorButton" type="button" class="secondary-button">Cancelar</button>
+            <button id="confirmMdtVetorButton" type="button">Agendar MDT</button>
           </div>
         </form>
       </dialog>

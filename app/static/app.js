@@ -53,7 +53,28 @@ const mdtBaciaExistingPath = document.getElementById("mdtBaciaExistingPath");
 const cancelMdtBaciaButton = document.getElementById("cancelMdtBaciaButton");
 const confirmMdtBaciaButton = document.getElementById("confirmMdtBaciaButton");
 
+const baciaMethodVetor = document.getElementById("baciaMethodVetor");
+const baciaVetorFiles = document.getElementById("baciaVetorFiles");
+const baciaVetorBarragemLat = document.getElementById("baciaVetorBarragemLat");
+const baciaVetorBarragemLon = document.getElementById("baciaVetorBarragemLon");
+const baciaVetorUploadButton = document.getElementById("baciaVetorUploadButton");
+const baciaVetorResult = document.getElementById("baciaVetorResult");
+const baciaVetorResultText = document.getElementById("baciaVetorResultText");
+const baciaVetorCrsText = document.getElementById("baciaVetorCrsText");
+const baciaVetorMissingWarning = document.getElementById("baciaVetorMissingWarning");
+const baciaVetorMissingList = document.getElementById("baciaVetorMissingList");
+const baciaVetorScheduleButton = document.getElementById("baciaVetorScheduleButton");
+const mdtVetorDialog = document.getElementById("mdtVetorDialog");
+const mdtVetorNomeLabel = document.getElementById("mdtVetorNomeLabel");
+const mdtVetorCrsLabel = document.getElementById("mdtVetorCrsLabel");
+const mdtVetorResolution = document.getElementById("mdtVetorResolution");
+const cancelMdtVetorButton = document.getElementById("cancelMdtVetorButton");
+const confirmMdtVetorButton = document.getElementById("confirmMdtVetorButton");
+
 let selectedBaciaUc = null;
+let selectedBaciaPoint = null;
+let selectedVetorUpload = null;
+let activeBaciaMethod = "coord";
 let mdtBaciaFileExists = false;
 
 const gridNumberSrs = window.GRID_NUMBER_SRS || {};
@@ -161,6 +182,7 @@ function createJobCard(job) {
     </div>
     <p class="progress-text">0%</p>
     <a class="download-link hidden" href="#">Baixar resultado .tiff</a>
+    <a class="download-link log-link hidden" href="#">Baixar log do processamento</a>
   `;
   jobStatusList.appendChild(article);
   setJobView(job);
@@ -186,7 +208,15 @@ function setJobView(data) {
   article.querySelector(".progress-bar").style.width = `${data.progress}%`;
   article.querySelector(".progress-text").textContent = `${data.progress}%`;
 
-  const downloadLink = article.querySelector(".download-link");
+  const logLink = article.querySelector(".log-link");
+  if (data.log_url && (data.status === "completed" || data.status === "failed")) {
+    logLink.href = data.log_url;
+    logLink.classList.remove("hidden");
+  } else {
+    logLink.classList.add("hidden");
+  }
+
+  const downloadLink = article.querySelector(".download-link:not(.log-link)");
   if (data.download_url) {
     downloadLink.href = data.download_url;
     downloadLink.classList.remove("hidden");
@@ -478,9 +508,14 @@ function debounce(fn, delay) {
 }
 
 function switchBaciaMethod(method) {
+  activeBaciaMethod = method;
   methodButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.method === method));
   baciaMethodCoord.classList.toggle("hidden", method !== "coord");
   baciaMethodCode.classList.toggle("hidden", method !== "code");
+  baciaMethodVetor.classList.toggle("hidden", method !== "vetor");
+  // O resultado da busca por UC/coordenadas não vale para a bacia enviada como arquivo.
+  baciaResult.classList.toggle("hidden", method === "vetor" || selectedBaciaUc == null);
+  showBaciaMessage("");
 }
 
 methodButtons.forEach((btn) => {
@@ -494,7 +529,8 @@ function showBaciaMessage(message) {
 function showBaciaResult(uc, data) {
   selectedBaciaUc = uc;
   const areaText = data.upst_area != null ? `${data.upst_area.toFixed(2)} km²` : "não informada";
-  baciaResultText.textContent = `Bacia UC ${uc} · Área de contribuição: ${areaText} · Tiles MDT na bacia: ${data.tiles_found}/${data.tile_count}`;
+  const crsText = data.crs_destino ? ` · CRS do MDT: ${data.crs_destino}` : "";
+  baciaResultText.textContent = `Bacia UC ${uc} · Área de contribuição: ${areaText} · Tiles MDT na bacia: ${data.tiles_found}/${data.tile_count}${crsText}`;
   baciaResult.classList.remove("hidden");
 
   const missingTiles = data.missing_tiles || [];
@@ -510,6 +546,7 @@ function showBaciaResult(uc, data) {
 async function lookupByUc(uc) {
   showBaciaMessage("Buscando bacia...");
   baciaResult.classList.add("hidden");
+  selectedBaciaPoint = null;
   try {
     const response = await fetch(`/api/bacias/by-uc/${encodeURIComponent(uc)}`);
     const data = await response.json();
@@ -533,6 +570,7 @@ async function lookupByPoint(lat, lon) {
       throw new Error(data.detail || "Nenhuma bacia encontrada para essa coordenada.");
     }
     showBaciaMessage("");
+    selectedBaciaPoint = { lat, lon };
     showBaciaResult(data.uc, data);
   } catch (error) {
     showBaciaMessage(error.message);
@@ -616,6 +654,10 @@ async function submitMdtBaciaJob() {
   formData.set("merge_mode", mergeMode);
   formData.set("save_to_server", saveToServer ? "true" : "false");
   formData.set("approve_overwrite", approveOverwrite ? "true" : "false");
+  if (selectedBaciaPoint) {
+    formData.set("barragem_lat", selectedBaciaPoint.lat);
+    formData.set("barragem_lon", selectedBaciaPoint.lon);
+  }
 
   try {
     const response = await fetch("/api/mdt-bacia/jobs", { method: "POST", body: formData });
@@ -652,3 +694,146 @@ async function submitMdtBaciaJob() {
 confirmMdtBaciaButton.addEventListener("click", () => {
   submitMdtBaciaJob();
 });
+
+// --- Bacia enviada como arquivo vetorial ---
+function formatKm2(value) {
+  return `${Number(value || 0).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} km²`;
+}
+
+function showVetorResult(data) {
+  selectedVetorUpload = data;
+  baciaVetorResultText.textContent =
+    `Bacia ${data.nome} (${data.arquivo}, ${data.n_feicoes} feição(ões)) · Área: ${formatKm2(data.area_km2)} · ` +
+    `Folhas MDT na bacia: ${data.tiles_found}/${data.tile_count}`;
+
+  const zonas = data.area_zona_km2 || {};
+  const entreZonas = (zonas["22S"] || 0) > 0 && (zonas["23S"] || 0) > 0;
+  let crsText = data.reprojetada
+    ? `CRS original ${data.crs_original} → reprojetada para ${data.crs_destino}.`
+    : `CRS ${data.crs_destino} mantido (já é SIRGAS 2000 / UTM).`;
+  if (entreZonas) {
+    crsText += ` Bacia entre as zonas 22S (${formatKm2(zonas["22S"])}) e 23S (${formatKm2(zonas["23S"])}).`;
+  }
+  baciaVetorCrsText.textContent = crsText;
+
+  const missing = data.missing_tiles || [];
+  baciaVetorMissingWarning.classList.toggle("hidden", missing.length === 0);
+  baciaVetorMissingList.innerHTML = "";
+  missing.forEach((name) => {
+    const item = document.createElement("li");
+    item.textContent = name;
+    baciaVetorMissingList.appendChild(item);
+  });
+  baciaVetorScheduleButton.disabled = data.tiles_found === 0;
+  baciaVetorResult.classList.remove("hidden");
+}
+
+function readBarragemInputs() {
+  const latRaw = baciaVetorBarragemLat.value.trim();
+  const lonRaw = baciaVetorBarragemLon.value.trim();
+  if (!latRaw && !lonRaw) {
+    return { ok: true, value: null };
+  }
+  const lat = parseFloat(latRaw);
+  const lon = parseFloat(lonRaw);
+  if (Number.isNaN(lat) || Number.isNaN(lon)) {
+    return { ok: false, value: null };
+  }
+  return { ok: true, value: { lat, lon } };
+}
+
+async function uploadBaciaVetor() {
+  if (!baciaVetorFiles.files.length) {
+    showBaciaMessage("Selecione o arquivo da bacia.");
+    return;
+  }
+  const formData = new FormData();
+  Array.from(baciaVetorFiles.files).forEach((file) => formData.append("files", file));
+
+  showBaciaMessage("Enviando e analisando a bacia...");
+  baciaVetorResult.classList.add("hidden");
+  selectedVetorUpload = null;
+  baciaVetorUploadButton.disabled = true;
+  try {
+    const response = await fetch("/api/bacias/upload", { method: "POST", body: formData });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || "Não foi possível ler a bacia enviada.");
+    }
+    showBaciaMessage("");
+    showVetorResult(data);
+  } catch (error) {
+    showBaciaMessage(error.message);
+  } finally {
+    baciaVetorUploadButton.disabled = false;
+  }
+}
+
+baciaVetorUploadButton.addEventListener("click", uploadBaciaVetor);
+
+baciaVetorFiles.addEventListener("change", () => {
+  baciaVetorResult.classList.add("hidden");
+  selectedVetorUpload = null;
+});
+
+baciaVetorScheduleButton.addEventListener("click", () => {
+  if (!selectedVetorUpload) {
+    return;
+  }
+  const barragem = readBarragemInputs();
+  if (!barragem.ok) {
+    showBaciaMessage("Informe latitude e longitude válidas para a barragem (ou deixe as duas em branco).");
+    return;
+  }
+  mdtVetorNomeLabel.textContent = selectedVetorUpload.nome;
+  mdtVetorCrsLabel.textContent = selectedVetorUpload.crs_destino;
+  mdtVetorResolution.value = "5";
+  mdtVetorDialog.showModal();
+});
+
+cancelMdtVetorButton.addEventListener("click", () => mdtVetorDialog.close());
+
+async function submitMdtVetorJob() {
+  const resolution = parseFloat(mdtVetorResolution.value);
+  if (Number.isNaN(resolution) || resolution < 0.1 || resolution > 100) {
+    showBaciaMessage("Resolução espacial deve estar entre 0.1 e 100 metros.");
+    return;
+  }
+  const barragem = readBarragemInputs();
+  if (!barragem.ok) {
+    showBaciaMessage("Informe latitude e longitude válidas para a barragem (ou deixe as duas em branco).");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.set("upload_id", selectedVetorUpload.upload_id);
+  formData.set("resolution", resolution);
+  if (barragem.value) {
+    formData.set("barragem_lat", barragem.value.lat);
+    formData.set("barragem_lon", barragem.value.lon);
+  }
+
+  try {
+    const response = await fetch("/api/mdt-bacia/upload-jobs", { method: "POST", body: formData });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || "Falha ao agendar o MDT da bacia.");
+    }
+    mdtVetorDialog.close();
+    clearPollTimers();
+    let message = data.message;
+    if (data.missing_tiles && data.missing_tiles.length > 0) {
+      message += ` Folhas ausentes no servidor (ignoradas): ${data.missing_tiles.join(", ")}.`;
+    }
+    showNotice(message);
+    createJobCard(data);
+    const timer = setInterval(() => pollJob(data.id), 2000);
+    pollTimers.set(data.id, timer);
+    pollJob(data.id);
+  } catch (error) {
+    mdtVetorDialog.close();
+    showBaciaMessage(error.message);
+  }
+}
+
+confirmMdtVetorButton.addEventListener("click", submitMdtVetorJob);
