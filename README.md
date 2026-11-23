@@ -51,8 +51,8 @@ Aba "MDT por bacia". A bacia pode ser informada de três formas:
   reprojetada para a zona correta: 22S a oeste de -48°, 23S a leste; bacia entre as duas zonas vai
   para a zona que contém a maior parte da área (área geodésica). As folhas são selecionadas pelo índice
   de articulação `app/gpkg/articulacao_lidar_correcao.gpkg`. Só o usuário escolhe a resolução (padrão
-  5 m) e, opcionalmente, a coordenada da barragem; o resultado fica só para download (nunca é
-  copiado para a pasta do servidor).
+  5 m); não há etapa de coordenada da barragem (a bacia enviada é aceita como está). O resultado
+  fica só para download (nunca é copiado para a pasta do servidor).
 
 Nos fluxos por coordenadas/UC as folhas vêm de `app/folhas_por_bacia/folhas_{uc}.csv` e o CRS do MDT
 segue a mesma regra da zona com maior área.
@@ -78,7 +78,7 @@ Ordem validada no guia do modelo TerraHidro: mosaico → recorte → limpeza →
 6. **Arquivo final**: GeoTIFF Float32, nodata -32768, DEFLATE, TILED, CRS gravado no arquivo.
 7. **Validação automática** (o job falha se não passar): CRS 31982/31983 igual ao da bacia, grade
    alinhada, 0 negativos e 0 nodata dentro da bacia, min/max entre 0 e 3000 m, ponto da barragem
-   sobre pixel válido (quando informado). Mais de 1% de pixels corrigidos gera aviso para revisão
+   sobre pixel válido (só no fluxo por coordenadas). Mais de 1% de pixels corrigidos gera aviso para revisão
    manual. Folhas ausentes no servidor deixam buracos grandes demais para o preenchimento, então o job
    reprova na checagem de nodata.
 
@@ -98,3 +98,23 @@ Variáveis de ambiente (mesmo padrão de `NUVENS_HOST_PATH`):
 - `MDT_BACIA_HOST_PATH`: pasta acessível fora do container para quem marcar "salvar cópia no
   servidor" (produção: `/home/sf-maps/mdt_bacia`).
 - `MDT_MAX_PIXELS`: teto de pixels do raster de trabalho do MDT por bacia.
+
+### API para scripts (`/api/v1`)
+
+Usada pelo fluxo em lote de manchas de inundação (`mancha_lote.py`, pasta `MANCHA`).
+
+- `GET /api/v1/health` → `{"status": "ok", ...}`.
+- `POST /api/v1/mdt-bacia` (multipart): `files` (shapefile solto ou `.zip`, `.gpkg`, `.kml/.kmz`),
+  `nome` (identificação; o MDT sai como `MDT_BACIA_<nome>_<res>m.tif`) e `resolution` (padrão 5).
+  Envia e agenda numa chamada só; responde 202 com `id`, `missing_tiles`, `target_srs`, `status_url`,
+  `download_url` e `log_url`.
+- `GET /api/jobs/{id}` → `status` (`queued`/`processing`/`completed`/`failed`), `progress`, `message`.
+- `GET /api/jobs/{id}/download` (MDT) e `GET /api/jobs/{id}/log` (log, disponível também quando a
+  validação reprova).
+
+Exemplo:
+
+```bash
+curl -F files=@BACIA_HIDROGRAFICA.zip --form-string nome=20260069235-PZS --form-string resolution=5 \
+     http://10.20.40.200:9091/api/v1/mdt-bacia
+```

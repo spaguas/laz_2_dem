@@ -70,6 +70,12 @@ params (tile list, resolution, merge mode, etc.) as a loosely-typed dict. `app/m
 FastAPI app: routes create jobs, enqueue them, and the frontend (`app/static/app.js`) polls
 `GET /api/jobs/{id}` every 2s.
 
+**Script API** (`/api/v1`): `POST /api/v1/mdt-bacia` uploads a basin file and schedules the MDT job in
+one call (helpers `_preparar_upload` + `_agendar_upload`, shared with the two-step web flow
+`/api/bacias/upload` → `/api/mdt-bacia/upload-jobs`). The uploaded-basin flow takes **no dam
+coordinate** (removed on purpose; the caller checks point-in-basin). The dam coordinate only exists in
+the UC/point lookup flow. Client: `mancha_lote.py` in the MANCHA folder (Windows/QGIS side).
+
 **Directories are runtime data, not static config** — `app/nuvens` (source `.laz` files),
 `app/mdt_tiles` (source MDT tiles), `app/outputs` (generated files), `app/data` (jobs.json),
 `app/mdt_bacia` (optional server-side copy of basin merges). In Docker these are bind-mounted via

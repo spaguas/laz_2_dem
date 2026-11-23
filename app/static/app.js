@@ -55,8 +55,6 @@ const confirmMdtBaciaButton = document.getElementById("confirmMdtBaciaButton");
 
 const baciaMethodVetor = document.getElementById("baciaMethodVetor");
 const baciaVetorFiles = document.getElementById("baciaVetorFiles");
-const baciaVetorBarragemLat = document.getElementById("baciaVetorBarragemLat");
-const baciaVetorBarragemLon = document.getElementById("baciaVetorBarragemLon");
 const baciaVetorUploadButton = document.getElementById("baciaVetorUploadButton");
 const baciaVetorResult = document.getElementById("baciaVetorResult");
 const baciaVetorResultText = document.getElementById("baciaVetorResultText");
@@ -728,20 +726,6 @@ function showVetorResult(data) {
   baciaVetorResult.classList.remove("hidden");
 }
 
-function readBarragemInputs() {
-  const latRaw = baciaVetorBarragemLat.value.trim();
-  const lonRaw = baciaVetorBarragemLon.value.trim();
-  if (!latRaw && !lonRaw) {
-    return { ok: true, value: null };
-  }
-  const lat = parseFloat(latRaw);
-  const lon = parseFloat(lonRaw);
-  if (Number.isNaN(lat) || Number.isNaN(lon)) {
-    return { ok: false, value: null };
-  }
-  return { ok: true, value: { lat, lon } };
-}
-
 async function uploadBaciaVetor() {
   if (!baciaVetorFiles.files.length) {
     showBaciaMessage("Selecione o arquivo da bacia.");
@@ -780,11 +764,6 @@ baciaVetorScheduleButton.addEventListener("click", () => {
   if (!selectedVetorUpload) {
     return;
   }
-  const barragem = readBarragemInputs();
-  if (!barragem.ok) {
-    showBaciaMessage("Informe latitude e longitude válidas para a barragem (ou deixe as duas em branco).");
-    return;
-  }
   mdtVetorNomeLabel.textContent = selectedVetorUpload.nome;
   mdtVetorCrsLabel.textContent = selectedVetorUpload.crs_destino;
   mdtVetorResolution.value = "5";
@@ -799,19 +778,10 @@ async function submitMdtVetorJob() {
     showBaciaMessage("Resolução espacial deve estar entre 0.1 e 100 metros.");
     return;
   }
-  const barragem = readBarragemInputs();
-  if (!barragem.ok) {
-    showBaciaMessage("Informe latitude e longitude válidas para a barragem (ou deixe as duas em branco).");
-    return;
-  }
 
   const formData = new FormData();
   formData.set("upload_id", selectedVetorUpload.upload_id);
   formData.set("resolution", resolution);
-  if (barragem.value) {
-    formData.set("barragem_lat", barragem.value.lat);
-    formData.set("barragem_lon", barragem.value.lon);
-  }
 
   try {
     const response = await fetch("/api/mdt-bacia/upload-jobs", { method: "POST", body: formData });

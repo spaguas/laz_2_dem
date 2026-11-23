@@ -494,18 +494,39 @@ def _upload_folder(upload_id: str) -> Path:
     return folder
 
 
-@app.post("/api/bacias/upload")
-async def upload_bacia(files: list[UploadFile] = File(...)) -> JSONResponse:
-    _cleanup_old_uploads()
-    arquivos = [(f.filename or "", await f.read()) for f in files]
+def _upload_response(upload_id: str, meta: dict, found: list[Path], missing: list[str]) -> dict:
+    return {
+        "upload_id": upload_id,
+        "nome": meta["nome"],
+        "arquivo": meta["arquivo_enviado"],
+        "crs_original": meta["crs_original"],
+        "crs_destino": f"EPSG:{meta['epsg']}",
+        "reprojetada": meta["reprojetada"],
+        "n_feicoes": meta["n_feicoes"],
+        "area_km2": meta["area_km2"],
+        "area_zona_km2": meta["area_zona_km2"],
+        "tile_count": len(meta["tile_names"]),
+        "tiles_found": len(found),
+        "missing_tiles": missing,
+    }
 
+
+def _preparar_upload(
+    arquivos: list[tuple[str, bytes]], nome: Optional[str] = None
+) -> tuple[str, dict, list[Path], list[str]]:
+    """Grava a bacia enviada em uploads/<id>/ (bacia.gpkg + meta.json).
+
+    Devolve (upload_id, meta, folhas encontradas, folhas ausentes). `nome` (opcional)
+    substitui o nome do arquivo enviado na identificação da bacia e do MDT gerado.
+    """
+    _cleanup_old_uploads()
     upload_id = uuid.uuid4().hex
     folder = UPLOAD_DIR / upload_id
     raw_dir = folder / "original"
     try:
         vector_path = bacia_vetor.salvar_upload(arquivos, raw_dir)
-        nome = bacia_vetor.nome_ascii(vector_path.stem, max_len=40)
-        bacia = bacia_vetor.preparar_bacia(vector_path, nome)
+        nome_bacia = bacia_vetor.nome_ascii((nome or "").strip() or vector_path.stem, max_len=40)
+        bacia = bacia_vetor.preparar_bacia(vector_path, nome_bacia)
     except bacia_vetor.BaciaVetorError as exc:
         shutil.rmtree(folder, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -535,34 +556,13 @@ async def upload_bacia(files: list[UploadFile] = File(...)) -> JSONResponse:
         "tile_names": tile_names,
     }
     (folder / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    return JSONResponse(
-        {
-            "upload_id": upload_id,
-            "nome": bacia.nome,
-            "arquivo": vector_path.name,
-            "crs_original": bacia.crs_original,
-            "crs_destino": f"EPSG:{bacia.epsg}",
-            "reprojetada": bacia.reprojetada,
-            "n_feicoes": bacia.n_feicoes,
-            "area_km2": bacia.area_km2,
-            "area_zona_km2": bacia.area_zona_km2,
-            "tile_count": len(tile_names),
-            "tiles_found": len(found),
-            "missing_tiles": missing,
-        }
-    )
+    return upload_id, meta, found, missing
 
 
-@app.post("/api/mdt-bacia/upload-jobs")
-def create_mdt_bacia_upload_job(
-    upload_id: Annotated[str, Form()],
-    resolution: Annotated[float, Form()] = 5.0,
-    barragem_lat: Annotated[Optional[float], Form()] = None,
-    barragem_lon: Annotated[Optional[float], Form()] = None,
-) -> JSONResponse:
+def _agendar_upload(upload_id: str, resolution: float) -> dict:
+    """Agenda o MDT de uma bacia já enviada. Não usa coordenada de barragem: a bacia
+    enviada é aceita como está (a conferência ponto-na-bacia é feita por quem envia)."""
     _validate_resolution(resolution)
-    barragem = _parse_barragem(barragem_lat, barragem_lon)
     upload = _upload_folder(upload_id)
     meta = json.loads((upload / "meta.json").read_text(encoding="utf-8"))
 
@@ -598,24 +598,76 @@ def create_mdt_bacia_upload_job(
             "save_to_server": False,
             "merge_mode": "fast",
             "bacia_path": str(bacia_path),
-            "barragem": barragem,
+            "barragem": None,
         },
     )
 
+    return {
+        "id": job_id,
+        "filename": filename,
+        "status": "queued",
+        "progress": 0,
+        "message": "MDT da bacia enviada agendado para execução.",
+        "kind": "mdt_bacia",
+        "tile_count": len(tile_files),
+        "missing_tiles": missing_tiles,
+        "target_srs": f"EPSG:{meta['epsg']}",
+    }
+
+
+@app.post("/api/bacias/upload")
+async def upload_bacia(files: list[UploadFile] = File(...)) -> JSONResponse:
+    arquivos = [(f.filename or "", await f.read()) for f in files]
+    upload_id, meta, found, missing = _preparar_upload(arquivos)
+    return JSONResponse(_upload_response(upload_id, meta, found, missing))
+
+
+@app.post("/api/mdt-bacia/upload-jobs")
+def create_mdt_bacia_upload_job(
+    upload_id: Annotated[str, Form()],
+    resolution: Annotated[float, Form()] = 5.0,
+) -> JSONResponse:
+    return JSONResponse(_agendar_upload(upload_id, resolution), status_code=202)
+
+
+# --- API para scripts (fluxo em lote de manchas de inundação) ---------------------
+@app.get("/api/v1/health")
+def api_v1_health() -> JSONResponse:
     return JSONResponse(
         {
-            "id": job_id,
-            "filename": filename,
-            "status": "queued",
-            "progress": 0,
-            "message": "MDT da bacia enviada agendado para execução.",
-            "kind": "mdt_bacia",
-            "tile_count": len(tile_files),
-            "missing_tiles": missing_tiles,
-            "target_srs": f"EPSG:{meta['epsg']}",
-        },
-        status_code=202,
+            "status": "ok",
+            "mdt_tiles_dir": str(MDT_DIR),
+            "mdt_tiles_dir_existe": MDT_DIR.is_dir(),
+            "fila": store.get_overall_summary(),
+        }
     )
+
+
+@app.post("/api/v1/mdt-bacia")
+async def api_v1_mdt_bacia(
+    files: list[UploadFile] = File(...),
+    nome: Annotated[Optional[str], Form()] = None,
+    resolution: Annotated[float, Form()] = 5.0,
+) -> JSONResponse:
+    """Envia a bacia e agenda o MDT numa única chamada.
+
+    `files`: shapefile (.shp/.shx/.dbf/.prj, soltos ou em .zip), .gpkg ou .kml/.kmz.
+    `nome`: identificação usada no nome do MDT (MDT_BACIA_<nome>_<res>m.tif).
+    Acompanhe por GET /api/jobs/{id}; baixe por /api/jobs/{id}/download e /api/jobs/{id}/log.
+    """
+    _validate_resolution(resolution)
+    arquivos = [(f.filename or "", await f.read()) for f in files]
+    upload_id, meta, found, missing = _preparar_upload(arquivos, nome)
+    resposta = _agendar_upload(upload_id, resolution)
+    resposta.update(
+        {
+            "bacia": _upload_response(upload_id, meta, found, missing),
+            "status_url": f"/api/jobs/{resposta['id']}",
+            "download_url": f"/api/jobs/{resposta['id']}/download",
+            "log_url": f"/api/jobs/{resposta['id']}/log",
+        }
+    )
+    return JSONResponse(resposta, status_code=202)
 
 
 @app.get("/api/summary")
